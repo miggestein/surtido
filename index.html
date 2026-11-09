@@ -1,0 +1,123 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0f3d5e">
+<title>Surtido Betterware</title>
+<link rel="manifest" href="manifest.json">
+<link rel="icon" href="icon-192.png">
+<style>
+  :root{--azul:#0f3d5e;--azul2:#1b5f8c;--verde:#1f9d55;--rojo:#c53030;--amar:#d69e2e;--fondo:#f4f6f8;--txt:#1a202c;--gris:#718096}
+  *{box-sizing:border-box}
+  body{margin:0;font-family:system-ui,-apple-system,Roboto,sans-serif;background:var(--fondo);color:var(--txt)}
+  header{background:var(--azul);color:#fff;padding:12px 16px;display:flex;align-items:center;justify-content:space-between;gap:8px}
+  header h1{font-size:18px;margin:0}
+  header .prog{font-size:15px;font-weight:600}
+  main{padding:16px;max-width:640px;margin:0 auto}
+  .oculto{display:none!important}
+  button{font:inherit;border:0;border-radius:12px;padding:14px 16px;font-size:17px;font-weight:600;cursor:pointer}
+  .prim{background:var(--azul2);color:#fff}
+  .sec{background:#e2e8f0;color:var(--txt)}
+  .peligro{background:#fed7d7;color:var(--rojo)}
+  .fila{display:flex;gap:8px;flex-wrap:wrap}
+  .fila>button{flex:1}
+  .card{background:#fff;border-radius:14px;padding:14px;margin:12px 0;box-shadow:0 1px 3px rgba(0,0,0,.08)}
+  .lista .bolsa{display:flex;align-items:center;gap:12px;padding:10px 0;border-bottom:1px solid #edf2f7}
+  .num{min-width:52px;height:52px;border-radius:12px;background:var(--azul);color:#fff;display:flex;align-items:center;justify-content:center;font-size:26px;font-weight:800}
+  .num.lista-ok{background:var(--verde)}
+  .nombre{font-weight:700}
+  .sub{color:var(--gris);font-size:14px}
+  #video-wrap{position:relative;background:#000;border-radius:14px;overflow:hidden;aspect-ratio:4/3}
+  #video{width:100%;height:100%;object-fit:cover}
+  #guia{position:absolute;left:10%;right:10%;top:38%;height:24%;border:3px solid rgba(255,255,255,.8);border-radius:10px}
+  #resultado{border-radius:16px;padding:18px;margin:12px 0;text-align:center;color:#fff;background:var(--gris);min-height:150px;display:flex;flex-direction:column;justify-content:center}
+  #resultado.ok{background:var(--verde)}
+  #resultado.malo{background:var(--rojo)}
+  #resultado.aviso{background:var(--amar)}
+  #res-grande{font-size:64px;font-weight:900;line-height:1}
+  #res-nombre{font-size:24px;font-weight:700;margin-top:6px}
+  #res-detalle{font-size:16px;margin-top:6px;opacity:.95}
+  #manual{display:flex;gap:8px;margin:8px 0}
+  #manual input{flex:1;font-size:28px;padding:10px 12px;border-radius:12px;border:2px solid #cbd5e0;letter-spacing:4px;text-align:center;min-width:0}
+  table{width:100%;border-collapse:collapse;font-size:15px}
+  td{padding:6px 4px;border-bottom:1px solid #edf2f7;vertical-align:top}
+  td.c{text-align:right;white-space:nowrap;font-weight:700}
+  .hecho{color:var(--verde)}
+  .falta{color:var(--rojo)}
+  .regalo{font-size:12px;background:#fefcbf;color:#744210;border-radius:6px;padding:1px 6px;margin-left:4px}
+  h2{font-size:20px;margin:18px 0 6px}
+  .aviso-txt{background:#fffaf0;border:1px solid #fbd38d;border-radius:10px;padding:10px;font-size:14px}
+</style>
+</head>
+<body>
+<header>
+  <h1>Surtido Betterware</h1>
+  <div class="prog" id="prog"></div>
+</header>
+<main>
+
+  <!-- INICIO -->
+  <section id="v-inicio">
+    <div class="card">
+      <h2 style="margin-top:0">Cargar la semana</h2>
+      <p class="sub">Elige el reporte (o los reportes) en PDF que descargan de Betterware. Puedes elegir varios a la vez.</p>
+      <input type="file" id="archivos" accept="application/pdf" multiple class="oculto">
+      <button class="prim" style="width:100%" onclick="document.getElementById('archivos').click()">Elegir PDF</button>
+      <p id="cargando" class="sub"></p>
+    </div>
+    <div class="card oculto" id="continuar-card">
+      <p>Hay una semana a medio surtir guardada.</p>
+      <div class="fila">
+        <button class="prim" onclick="ir('surtir')">Continuar</button>
+        <button class="peligro" onclick="borrarTodo()">Empezar de cero</button>
+      </div>
+    </div>
+  </section>
+
+  <!-- BOLSAS -->
+  <section id="v-bolsas" class="oculto">
+    <p class="sub">Numera las bolsas así. Toca un nombre para ver qué lleva.</p>
+    <div id="avisos"></div>
+    <div class="card lista" id="lista-bolsas"></div>
+    <div class="fila">
+      <button class="prim" onclick="ir('surtir')">Empezar a surtir</button>
+    </div>
+  </section>
+
+  <!-- SURTIR -->
+  <section id="v-surtir" class="oculto">
+    <div id="video-wrap"><video id="video" playsinline muted></video><div id="guia"></div></div>
+    <p id="cam-msg" class="sub"></p>
+    <div id="resultado"><div id="res-grande">—</div><div id="res-nombre">Escanea un producto</div><div id="res-detalle"></div></div>
+    <form id="manual" onsubmit="event.preventDefault();manual()">
+      <input id="codigo" inputmode="numeric" pattern="[0-9]*" maxlength="5" placeholder="Código" autocomplete="off">
+      <button class="prim" type="submit">OK</button>
+    </form>
+    <div class="fila">
+      <button class="sec" onclick="deshacer()">↩ Deshacer</button>
+      <button class="sec" onclick="ir('bolsas')">Bolsas</button>
+      <button class="sec" onclick="ir('final')">Faltantes</button>
+    </div>
+  </section>
+
+  <!-- DETALLE DE UNA BOLSA -->
+  <section id="v-detalle" class="oculto">
+    <div class="card" id="detalle"></div>
+    <button class="sec" style="width:100%" onclick="ir(volverA)">← Volver</button>
+  </section>
+
+  <!-- FINAL -->
+  <section id="v-final" class="oculto">
+    <div id="final"></div>
+    <div class="fila" style="margin-top:12px">
+      <button class="sec" onclick="ir('surtir')">← Seguir surtiendo</button>
+      <button class="peligro" onclick="borrarTodo()">Terminar semana</button>
+    </div>
+  </section>
+
+</main>
+<script src="vendor/pdf.min.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
