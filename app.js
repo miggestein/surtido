@@ -227,7 +227,7 @@ async function prenderCamara() {
     return;
   }
   try {
-    detector = new BarcodeDetector({ formats: ['code_128', 'ean_13', 'ean_8', 'upc_a', 'code_39'] });
+    detector = new BarcodeDetector({ formats: ['code_128'] });
     stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment', width: { ideal: 1280 } }, audio: false });
     const v = document.getElementById('video');
     v.srcObject = stream;
@@ -244,14 +244,24 @@ function apagarCamara() {
   if (stream) stream.getTracks().forEach(t => t.stop());
   stream = null;
 }
+// Algunos Android le pegan dígitos extra al código (p. ej. un "1" al inicio).
+// Se buscan todos los tramos de 5 dígitos y se prefiere el que viene en el reporte; si ninguno, los últimos 5.
+function codigoDe(raw) {
+  const d = raw.replace(/\D/g, '');
+  if (d.length < 5) return null;
+  const tramos = [];
+  for (let i = d.length - 5; i >= 0; i--) tramos.push(d.slice(i, i + 5));
+  return tramos.find(t => estado && estado.asociados.some(a => a.items[t])) || tramos[0];
+}
+
 async function bucle() {
   const v = document.getElementById('video');
   while (escaneando) {
     try {
       const cods = await detector.detect(v);
       for (const c of cods) {
-        const m = (c.rawValue || '').match(/\d{5}/);
-        if (m) { surtir(m[0], 'camara'); break; }
+        const cod = codigoDe(c.rawValue || '');
+        if (cod) { surtir(cod, 'camara'); break; }
       }
     } catch {}
     await new Promise(r => setTimeout(r, 150));
