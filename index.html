@@ -93,6 +93,17 @@
   .bolsa .mini>div{height:100%;background:var(--azul2)}
   .bolsa.lista{border-color:var(--ok);background:var(--okc)}
   .bolsa.lista .mini>div{background:var(--ok)}
+  .seg{display:flex;gap:4px;background:var(--fondo);border:1px solid var(--linea);border-radius:12px;padding:4px;margin:4px 0 14px}
+  .seg button{flex:1;min-height:48px;border:none;border-radius:9px;background:transparent;color:var(--txt2);font-size:17px;font-weight:600;cursor:pointer}
+  .seg button.on{background:var(--panel);color:var(--txt);font-weight:800;box-shadow:0 0 0 1px var(--linea)}
+  .grupo-nota{margin-bottom:18px}
+  .cab-nota{display:flex;align-items:center;gap:10px;border-radius:12px;padding:10px 12px;margin-bottom:10px}
+  .cab-nota .k{font-family:ui-monospace,Consolas,monospace;font-size:16px;font-weight:800;background:#fff;border-radius:6px;padding:3px 8px}
+  .cab-nota .nn{font-size:18px;font-weight:800;line-height:1.2}
+  .cab-nota .ss{font-size:14px;opacity:.85;overflow-wrap:anywhere}
+  .etq{align-self:flex-start;font-family:ui-monospace,Consolas,monospace;font-size:13px;font-weight:800;border-radius:5px;padding:1px 6px;margin-bottom:4px}
+  .d0{background:#dbeafe;color:#0c447c}.d1{background:#fce7f3;color:#72243e}.d2{background:#dcfce7;color:#14532d}.d3{background:#fef3c7;color:#713f12}
+  .cab-nota.d0 .k{color:#0c447c}.cab-nota.d1 .k{color:#72243e}.cab-nota.d2 .k{color:#14532d}.cab-nota.d3 .k{color:#713f12}
   table{width:100%;border-collapse:collapse;font-size:16px}
   td{padding:8px 4px;border-bottom:1px solid var(--linea);vertical-align:top}
   td.c{text-align:right;white-space:nowrap;font-weight:700}
@@ -153,7 +164,11 @@
   <div class="encabezado"><button class="sec" onclick="ir('surtir')">← Escanear</button><h1 style="margin:0">Bolsas</h1></div>
   <div id="avisos"></div>
   <p class="sub">Escribe estos nombres en las bolsas. Toca una para ver qué lleva.</p>
-  <div class="rejilla" id="rejilla"></div>
+  <div class="seg" id="seg-bolsas" role="group" aria-label="Cómo ver las bolsas">
+    <button data-v="nota" onclick="cambiarVista('nota')">Por nota</button>
+    <button data-v="todas" onclick="cambiarVista('todas')">Todas juntas</button>
+  </div>
+  <div id="rejilla"></div>
 </section>
 
 <!-- DETALLE -->

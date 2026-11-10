@@ -36,10 +36,15 @@ function ponerAlias(asociados) {
   for (const a of asociados) a.alias = nombrePila(a.nombre);
   const cuenta = {};
   for (const a of asociados) cuenta[a.alias] = (cuenta[a.alias] || 0) + 1;
-  for (const a of asociados) if (cuenta[a.alias] > 1) {      // dos "Laura": se agrega el primer apellido
-    const resto = titulo(a.nombre).split(' ').slice(a.alias.split(' ').length);
+  const base = asociados.map(a => a.alias);
+  asociados.forEach((a, i) => {
+    if (cuenta[base[i]] < 2) return;
+    // La misma asociada en dos notas de distribuidoras distintas: "Imelda (FDWP)"
+    const misma = asociados.filter((b, j) => base[j] === base[i] && b.nombre === a.nombre).length > 1;
+    if (misma && a.dist) { a.alias += ` (${a.dist})`; return; }
+    const resto = titulo(a.nombre).split(' ').slice(a.alias.split(' ').length);   // dos "Laura": primer apellido
     a.alias += ' ' + (resto.find(w => !PARTICULAS.has(w.toLowerCase())) || '');
-  }
+  });
 }
 
 // ---------- Lectura del PDF ----------
@@ -83,7 +88,12 @@ function leerNotas(lineas) {
   let nota = null;
   for (const l of lineas) {
     const folio = l.match(/Folio de pedido (OV-\d+)/);
-    if (folio) { nota = { folio: folio[1], cod: null, nombre: null, prods: [] }; notas.push(nota); continue; }
+    if (folio) {
+      // Misma línea: "… Distribuidora FDWP ADELA PEÑA Código" → dueña de la nota
+      const d = l.match(/Distribuidora ([A-Z0-9]{2,8}) (.+?)(?: C[oó]digo)?$/);
+      nota = { folio: folio[1], cod: null, nombre: null, dist: d ? d[1] : '', distNombre: d ? d[2].trim() : '', prods: [] };
+      notas.push(nota); continue;
+    }
     const as = l.match(/C[oó]digo (\d+) Nombre Asociado (.+?) Tel[eé]fono/);
     if (as && nota) { nota.cod = as[1]; nota.nombre = as[2].replace(/\s+/g, ' ').trim(); continue; }
     const p = leerProducto(l);
@@ -104,9 +114,11 @@ async function cargarArchivos(files) {
     for (const n of notas) {
       if (foliosVistos.has(n.folio)) { avisos.push(`El folio ${n.folio} venía repetido; lo conté una sola vez.`); continue; }
       foliosVistos.add(n.folio);
-      const clave = n.cod || n.nombre || n.folio;
-      if (!porAsociado.has(clave)) porAsociado.set(clave, { cod: n.cod, nombre: n.nombre || '(sin nombre)', folios: [], items: {} });
+      // Una bolsa por asociada y por distribuidora (dos PDF de dueñas distintas = pedidos distintos)
+      const clave = n.dist + '|' + (n.cod || n.nombre || n.folio);
+      if (!porAsociado.has(clave)) porAsociado.set(clave, { cod: n.cod, nombre: n.nombre || '(sin nombre)', dist: n.dist, distNombre: n.distNombre, archivos: [], folios: [], items: {} });
       const a = porAsociado.get(clave);
+      if (!a.archivos.includes(f.name)) a.archivos.push(f.name);
       a.folios.push(n.folio);
       if (!n.prods.length) avisos.push(`El folio ${n.folio} (${titulo(a.nombre)}) no tiene productos legibles.`);
       for (const p of n.prods) {
@@ -593,13 +605,39 @@ function pintarFeed() {
 }
 function pintarBolsas() {
   $('avisos').innerHTML = estado.avisos.length ? `<div class="aviso-txt">${estado.avisos.map(esc).join('<br>')}</div>` : '';
-  $('rejilla').innerHTML = estado.asociados.map(a => {
+  // Distribuidoras (dueñas de cada PDF), en el orden en que aparecen
+  const dists = [];
+  for (const a of estado.asociados) {
+    let d = dists.find(d => d.cod === (a.dist || ''));
+    if (!d) dists.push(d = { cod: a.dist || '', nombre: a.distNombre || '', archivos: [], bolsas: [] });
+    d.bolsas.push(a);
+    for (const f of a.archivos || []) if (!d.archivos.includes(f)) d.archivos.push(f);
+  }
+  const color = cod => 'd' + (dists.findIndex(d => d.cod === cod) % 4);
+  const tarjeta = (a, etiqueta) => {
     const t = piezas(a), h = hechas(a);
     return `<div class="bolsa ${h === t ? 'lista' : ''}" onclick="verBolsa(${a.id})">
+      ${etiqueta && a.dist ? `<span class="etq ${color(a.dist)}">${esc(a.dist)}</span>` : ''}
       <div class="n">${esc(a.alias)}</div>
       <div><div class="c">${h === t ? '✓ Completa' : `${h} de ${t} piezas`}</div><div class="mini"><div style="width:${100 * h / t}%"></div></div></div></div>`;
-  }).join('');
+  };
+  const porNota = vistaBolsas() === 'nota';
+  $('seg-bolsas').classList.toggle('oculto', dists.length < 2 && !dists[0]?.cod);
+  document.querySelectorAll('#seg-bolsas button').forEach(b => b.classList.toggle('on', b.dataset.v === vistaBolsas()));
+  $('rejilla').innerHTML = porNota
+    ? dists.map(d => {
+        const t = d.bolsas.reduce((s, a) => s + piezas(a), 0), h = d.bolsas.reduce((s, a) => s + hechas(a), 0);
+        return `<div class="grupo-nota"><div class="cab-nota ${color(d.cod)}">
+            ${d.cod ? `<span class="k">${esc(d.cod)}</span>` : ''}
+            <div style="flex:1;min-width:0"><div class="nn">${esc(d.nombre ? titulo(d.nombre) : 'Sin distribuidora')}</div>
+            <div class="ss">${esc(d.archivos.join(', '))}${d.archivos.length ? ' · ' : ''}${h} de ${t} piezas</div></div></div>
+          <div class="rejilla">${d.bolsas.map(a => tarjeta(a, false)).join('')}</div></div>`;
+      }).join('')
+    : `<div class="rejilla">${estado.asociados.map(a => tarjeta(a, true)).join('')}</div>`;
 }
+const CLAVE_VISTA = 'surtido-bw-vista';
+function vistaBolsas() { try { return localStorage.getItem(CLAVE_VISTA) || 'nota'; } catch { return 'nota'; } }
+function cambiarVista(v) { try { localStorage.setItem(CLAVE_VISTA, v); } catch {} pintarBolsas(); }
 let detalleId = null;
 function verBolsa(id, soloPintar) {
   detalleId = id;
@@ -609,7 +647,7 @@ function verBolsa(id, soloPintar) {
     `<tr><td>${cod}</td><td>${esc(it.desc)}${it.regalo ? '<span class="regalo">regalo</span>' : ''}</td>
      <td class="c ${it.hecho >= it.cant ? 'hecho' : 'falta'}">${it.hecho}/${it.cant}</td></tr>`).join('');
   $('detalle').innerHTML = `<h1 style="margin-top:0">${esc(a.alias)}</h1>
-    <p class="sub">${esc(titulo(a.nombre))} · ${a.folios.join(', ')}</p><table>${filas}</table>`;
+    <p class="sub">${esc(titulo(a.nombre))} · ${a.folios.join(', ')}${a.dist ? `<br>Nota de ${esc(a.dist)} · ${esc(titulo(a.distNombre || ''))}` : ''}</p><table>${filas}</table>`;
   if (!soloPintar) {
     vistaActual = 'detalle';
     for (const s of document.querySelectorAll('body > section')) s.classList.add('oculto');
