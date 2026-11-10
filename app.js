@@ -251,9 +251,23 @@ function limpiar() {
 }
 
 let audio = null;
+// iPhone solo deja sonar y hablar si el primer sonido nace de un toque: se "desbloquea" al primer toque.
+function desbloquearAudio() {
+  try {
+    audio = audio || new (window.AudioContext || window.webkitAudioContext)();
+    if (audio.state === 'suspended') audio.resume();
+    const u = new SpeechSynthesisUtterance(' '); u.volume = 0; speechSynthesis.speak(u);
+  } catch {}
+  document.removeEventListener('touchend', desbloquearAudio);
+  document.removeEventListener('click', desbloquearAudio);
+}
+document.addEventListener('touchend', desbloquearAudio);
+document.addEventListener('click', desbloquearAudio);
+
 function sonar(tipo) {
   try {
     audio = audio || new (window.AudioContext || window.webkitAudioContext)();
+    if (audio.state === 'suspended') audio.resume();
     const notas = tipo === 'ok' ? [[880, 0, .12]] : tipo === 'fin' ? [[660, 0, .1], [880, .12, .1], [1320, .24, .18]]
       : tipo ? [[220, 0, .18], [180, .22, .25]] : [];
     for (const [f, d, dur] of notas) {
@@ -301,16 +315,51 @@ $('teclas').innerHTML = ['1', '2', '3', '4', '5', '6', '7', '8', '9', '', '0', '
 // ---------- Cámara ----------
 let stream = null, detector = null, escaneando = false, visto = { cod: null, t: 0 }, wakeLock = null;
 
+// Lector de códigos: el nativo de Chrome Android (BarcodeDetector) si existe;
+// si no (iPhone/Safari), ZXing-C++ compilado a WebAssembly (vendor/zxing_reader.wasm, funciona sin internet).
+async function crearDetector() {
+  try {
+    if ('BarcodeDetector' in window) {
+      const f = await BarcodeDetector.getSupportedFormats();
+      if (f.includes('code_128')) {
+        const d = new BarcodeDetector({ formats: ['code_128'] });
+        return async v => (await d.detect(v)).map(c => c.rawValue || '');
+      }
+    }
+  } catch {}
+  const Z = window.ZXingWASM;
+  if (!Z) return null;
+  try {
+    Z.prepareZXingModule({
+      overrides: { locateFile: (p, pre) => p.endsWith('.wasm') ? new URL('vendor/zxing_reader.wasm', location.href).href : pre + p },
+      fireImmediately: true,
+    });
+    await Z.getZXingModule();
+  } catch { return null; }
+  const lienzo = document.createElement('canvas');
+  const ctx = lienzo.getContext('2d', { willReadFrequently: true });
+  return async v => {
+    const w = v.videoWidth, h = v.videoHeight;
+    if (!w || !h) return [];
+    lienzo.width = w; lienzo.height = h;
+    ctx.drawImage(v, 0, 0, w, h);
+    try {
+      const r = await Z.readBarcodes(ctx.getImageData(0, 0, w, h), { formats: ['Code128'], tryHarder: true, maxNumberOfSymbols: 1 });
+      return r.filter(b => b.isValid).map(b => b.text);
+    } catch { return []; }
+  };
+}
+
 async function prenderCamara() {
   pedirPantallaEncendida();
   if (escaneando) return;
   const msg = $('cam-msg');
-  if (!('BarcodeDetector' in window)) {
-    msg.textContent = 'Este navegador no lee códigos con la cámara. Usa Chrome en Android, o el botón Teclear.';
+  detector = detector || await crearDetector();
+  if (!detector) {
+    msg.textContent = 'No se pudo cargar el lector de códigos. Usa el botón Teclear.';
     msg.classList.remove('oculto'); return;
   }
   try {
-    detector = new BarcodeDetector({ formats: ['code_128'] });
     stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment', width: { ideal: 1280 } }, audio: false });
     const v = $('video');
     v.srcObject = stream;
@@ -341,9 +390,9 @@ async function bucle() {
   const v = $('video');
   while (escaneando) {
     try {
-      const cods = await detector.detect(v);
+      const cods = await detector(v);
       const ahora = Date.now();
-      const cod = cods.map(c => codigoDe(c.rawValue || '')).find(Boolean);
+      const cod = cods.map(codigoDe).find(Boolean);
       if (cod) {
         // Para contar otra pieza igual, el código tiene que salir de la cámara un momento.
         const repetido = cod === visto.cod && ahora - visto.t < T_FUERA;
