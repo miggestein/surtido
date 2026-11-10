@@ -8,116 +8,214 @@
 <link rel="manifest" href="manifest.json">
 <link rel="icon" href="icon-192.png">
 <style>
-  :root{--azul:#0f3d5e;--azul2:#1b5f8c;--verde:#1f9d55;--rojo:#c53030;--amar:#d69e2e;--fondo:#f4f6f8;--txt:#1a202c;--gris:#718096}
-  *{box-sizing:border-box}
-  body{margin:0;font-family:system-ui,-apple-system,Roboto,sans-serif;background:var(--fondo);color:var(--txt)}
-  header{background:var(--azul);color:#fff;padding:12px 16px;display:flex;align-items:center;justify-content:space-between;gap:8px}
-  header h1{font-size:18px;margin:0}
-  header .prog{font-size:15px;font-weight:600}
-  main{padding:16px;max-width:640px;margin:0 auto}
+  :root{
+    --azul:#0f3d5e;--azul2:#1b5f8c;--fondo:#eef1f4;--panel:#fff;--txt:#14202b;--txt2:#52606d;--linea:#d5dde5;
+    --ok:#17803d;--okc:#e6f4ea;--mal:#b42318;--malc:#fdecea;--sobra:#b45309;--sobrac:#fff4e5;--fin:#5b3cc4;
+  }
+  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+  html,body{height:100%}
+  body{margin:0;font-family:system-ui,-apple-system,Roboto,sans-serif;background:var(--fondo);color:var(--txt);font-size:17px}
   .oculto{display:none!important}
-  button{font:inherit;border:0;border-radius:12px;padding:14px 16px;font-size:17px;font-weight:600;cursor:pointer}
+  button{font:inherit;border:0;border-radius:14px;min-height:56px;padding:12px 16px;font-size:18px;font-weight:600;cursor:pointer;touch-action:manipulation}
+  button:active{transform:scale(.98)}
   .prim{background:var(--azul2);color:#fff}
-  .sec{background:#e2e8f0;color:var(--txt)}
-  .peligro{background:#fed7d7;color:var(--rojo)}
-  .fila{display:flex;gap:8px;flex-wrap:wrap}
-  .fila>button{flex:1}
-  .card{background:#fff;border-radius:14px;padding:14px;margin:12px 0;box-shadow:0 1px 3px rgba(0,0,0,.08)}
-  .lista .bolsa{display:flex;align-items:center;gap:12px;padding:10px 0;border-bottom:1px solid #edf2f7}
-  .num{min-width:52px;height:52px;border-radius:12px;background:var(--azul);color:#fff;display:flex;align-items:center;justify-content:center;font-size:26px;font-weight:800}
-  .num.lista-ok{background:var(--verde)}
-  .nombre{font-weight:700}
-  .sub{color:var(--gris);font-size:14px}
-  #video-wrap{position:relative;background:#000;border-radius:14px;overflow:hidden;aspect-ratio:4/3}
+  .sec{background:var(--panel);color:var(--txt);border:1px solid var(--linea)}
+  .peligro{background:var(--panel);color:var(--mal);border:1px solid #f1b8b2}
+  .ancho{width:100%}
+  .fila{display:flex;gap:10px}
+  .fila>*{flex:1}
+  input[type=text]{width:100%;font:inherit;font-size:22px;padding:14px;border-radius:14px;border:2px solid var(--linea);background:#fff}
+  input[type=text]:focus{outline:none;border-color:var(--azul2)}
+  .vista{padding:16px;max-width:560px;margin:0 auto}
+  .card{background:var(--panel);border-radius:16px;padding:16px;margin:12px 0;border:1px solid var(--linea)}
+  h1{font-size:24px;margin:8px 0 4px}
+  h2{font-size:20px;margin:0 0 8px}
+  .sub{color:var(--txt2);font-size:15px}
+  .aviso-txt{background:var(--sobrac);border:1px solid #f5c98b;color:#7a3e05;border-radius:12px;padding:10px 12px;font-size:15px;margin:12px 0}
+
+  /* Barra superior de surtir */
+  .barra{position:sticky;top:0;z-index:5;background:var(--azul);color:#fff;padding:10px 16px 12px}
+  .barra .fila{align-items:center;justify-content:space-between}
+  .chip{display:inline-flex;align-items:center;gap:6px;font-size:14px;background:rgba(255,255,255,.14);padding:6px 10px;border-radius:999px;flex:0 0 auto}
+  .chip .pt{width:9px;height:9px;border-radius:50%;background:#9aa5b1}
+  .chip.on .pt{background:#4ade80}.chip.off .pt{background:#f87171}
+  .conteo{font-size:17px;font-weight:700;flex:0 0 auto}
+  .prog{height:8px;border-radius:4px;background:rgba(255,255,255,.22);margin-top:10px;overflow:hidden}
+  .prog>div{height:100%;background:#7cc4fa;width:0;transition:width .3s}
+
+  /* Pantalla de escaneo */
+  #v-surtir{display:flex;flex-direction:column;min-height:100vh}
+  #v-surtir .cuerpo{padding:12px 16px 16px;display:flex;flex-direction:column;gap:12px;flex:1;max-width:560px;margin:0 auto;width:100%}
+  #cam{position:relative;background:#111;border-radius:16px;overflow:hidden;height:30vh;min-height:170px}
   #video{width:100%;height:100%;object-fit:cover}
-  #guia{position:absolute;left:10%;right:10%;top:38%;height:24%;border:3px solid rgba(255,255,255,.8);border-radius:10px}
-  #resultado{border-radius:16px;padding:18px;margin:12px 0;text-align:center;color:#fff;background:var(--gris);min-height:150px;display:flex;flex-direction:column;justify-content:center}
-  #resultado.ok{background:var(--verde)}
-  #resultado.malo{background:var(--rojo)}
-  #resultado.aviso{background:var(--amar)}
-  #res-grande{font-size:64px;font-weight:900;line-height:1}
-  #res-nombre{font-size:24px;font-weight:700;margin-top:6px}
-  #res-detalle{font-size:16px;margin-top:6px;opacity:.95}
-  #manual{display:flex;gap:8px;margin:8px 0}
-  #manual input{flex:1;font-size:28px;padding:10px 12px;border-radius:12px;border:2px solid #cbd5e0;letter-spacing:4px;text-align:center;min-width:0}
-  table{width:100%;border-collapse:collapse;font-size:15px}
-  td{padding:6px 4px;border-bottom:1px solid #edf2f7;vertical-align:top}
+  #mira{position:absolute;left:12%;right:12%;top:30%;bottom:30%;border:3px solid rgba(255,255,255,.85);border-radius:12px}
+  #cam-msg{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;text-align:center;color:#fff;padding:16px;font-size:15px;background:rgba(0,0,0,.55)}
+  #res{border-radius:18px;padding:16px;text-align:center;display:flex;flex-direction:column;justify-content:center;gap:4px;min-height:230px;flex:1;
+       background:var(--panel);border:2px dashed var(--linea);color:var(--txt2);transition:background .15s}
+  #res .etq{font-size:15px;font-weight:700;letter-spacing:.08em;text-transform:uppercase}
+  #res .grande{font-size:clamp(34px,10vw,52px);font-weight:900;line-height:1.05;color:inherit}
+  #res .det{font-size:16px}
+  #res .lista{font-size:17px;font-weight:600;margin-top:4px}
+  #res .tiempo{height:6px;border-radius:3px;background:rgba(255,255,255,.35);margin-top:10px;overflow:hidden}
+  #res .tiempo>div{height:100%;background:#fff;width:100%}
+  #res.ok{background:var(--ok);border:0;color:#fff}
+  #res.mal{background:var(--mal);border:0;color:#fff}
+  #res.sobra{background:var(--sobra);border:0;color:#fff}
+  #res.fin{background:var(--fin);border:0;color:#fff}
+  #res .btn-res{margin-top:12px;background:#fff;color:var(--txt);min-height:60px}
+  .acciones{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+  .acciones button{display:flex;align-items:center;justify-content:center;gap:8px}
+  #feed{font-size:14px;color:var(--txt2);display:flex;flex-direction:column;gap:2px}
+
+  /* Teclado */
+  #teclado{position:fixed;inset:auto 0 0 0;background:var(--panel);border-radius:20px 20px 0 0;padding:16px;box-shadow:0 -6px 24px rgba(0,0,0,.18);z-index:20;max-width:560px;margin:0 auto}
+  #tec-display{font-size:44px;font-weight:800;letter-spacing:10px;text-align:center;padding:6px;min-height:64px;border-bottom:2px solid var(--linea);margin-bottom:12px}
+  .teclas{display:grid;grid-template-columns:repeat(3,1fr);gap:10px}
+  .teclas button{min-height:64px;font-size:28px;background:var(--fondo)}
+  #velo{position:fixed;inset:0;background:rgba(0,0,0,.35);z-index:15}
+
+  /* Bolsas */
+  .rejilla{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:10px}
+  .bolsa{background:var(--panel);border:2px solid var(--linea);border-radius:16px;padding:14px;min-height:96px;display:flex;flex-direction:column;justify-content:space-between;cursor:pointer}
+  .bolsa .n{font-size:20px;font-weight:800;line-height:1.15}
+  .bolsa .c{font-size:15px;color:var(--txt2)}
+  .bolsa .mini{height:6px;border-radius:3px;background:var(--fondo);margin-top:8px;overflow:hidden}
+  .bolsa .mini>div{height:100%;background:var(--azul2)}
+  .bolsa.lista{border-color:var(--ok);background:var(--okc)}
+  .bolsa.lista .mini>div{background:var(--ok)}
+  table{width:100%;border-collapse:collapse;font-size:16px}
+  td{padding:8px 4px;border-bottom:1px solid var(--linea);vertical-align:top}
   td.c{text-align:right;white-space:nowrap;font-weight:700}
-  .hecho{color:var(--verde)}
-  .falta{color:var(--rojo)}
-  .regalo{font-size:12px;background:#fefcbf;color:#744210;border-radius:6px;padding:1px 6px;margin-left:4px}
-  h2{font-size:20px;margin:18px 0 6px}
-  .aviso-txt{background:#fffaf0;border:1px solid #fbd38d;border-radius:10px;padding:10px;font-size:14px}
+  .hecho{color:var(--ok)}.falta{color:var(--mal)}
+  .regalo{font-size:12px;background:#fef3c7;color:#78350f;border-radius:6px;padding:1px 6px;margin-left:4px}
+  .encabezado{display:flex;align-items:center;gap:10px;margin-bottom:8px}
+  .encabezado button{min-height:48px;flex:0 0 auto}
+
+  /* Compartir */
+  #codigo-sesion{font-size:56px;font-weight:900;letter-spacing:12px;text-align:center;margin:8px 0}
+  #qr{display:flex;justify-content:center}
+  #qr svg{width:220px;height:220px}
+  .persona{display:flex;align-items:center;gap:8px;padding:6px 0;font-size:17px}
+  .persona .pt{width:10px;height:10px;border-radius:50%;background:#4ade80}
 </style>
 </head>
 <body>
-<header>
+
+<!-- INICIO -->
+<section id="v-inicio" class="vista">
   <h1>Surtido Betterware</h1>
-  <div class="prog" id="prog"></div>
-</header>
-<main>
+  <p class="sub">Escanea cada producto y la app te dice en qué bolsa va.</p>
 
-  <!-- INICIO -->
-  <section id="v-inicio">
-    <div class="card">
-      <h2 style="margin-top:0">Cargar la semana</h2>
-      <p class="sub">Elige el reporte (o los reportes) en PDF que descargan de Betterware. Puedes elegir varios a la vez.</p>
-      <input type="file" id="archivos" accept="application/pdf" multiple class="oculto">
-      <button class="prim" style="width:100%" onclick="document.getElementById('archivos').click()">Elegir PDF</button>
-      <p id="cargando" class="sub"></p>
-    </div>
-    <div class="card oculto" id="continuar-card">
-      <p>Hay una semana a medio surtir guardada.</p>
-      <div class="fila">
-        <button class="prim" onclick="ir('surtir')">Continuar</button>
-        <button class="peligro" onclick="borrarTodo()">Empezar de cero</button>
-      </div>
-    </div>
-  </section>
+  <div class="card">
+    <h2>Tu nombre</h2>
+    <input type="text" id="mi-nombre" placeholder="Ana" autocomplete="off" maxlength="20">
+    <p class="sub" style="margin:8px 0 0">Así los demás ven quién escaneó cada producto.</p>
+  </div>
 
-  <!-- BOLSAS -->
-  <section id="v-bolsas" class="oculto">
-    <p class="sub">Numera las bolsas así. Toca un nombre para ver qué lleva.</p>
-    <div id="avisos"></div>
-    <div class="card lista" id="lista-bolsas"></div>
+  <div class="card oculto" id="continuar-card">
+    <h2>Semana guardada</h2>
+    <p class="sub" id="continuar-txt"></p>
+    <button class="prim ancho" onclick="continuar()">Continuar surtiendo</button>
+  </div>
+
+  <div class="card">
+    <h2>Nueva semana</h2>
+    <p class="sub">Elige el reporte o los reportes en PDF. Puedes elegir varios a la vez.</p>
+    <input type="file" id="archivos" accept="application/pdf" multiple class="oculto">
+    <button class="prim ancho" id="btn-pdf">Elegir PDF</button>
+    <p id="cargando" class="sub"></p>
+  </div>
+
+  <div class="card">
+    <h2>Unirme a otro celular</h2>
+    <p class="sub">Escribe el código de 4 letras que aparece en el otro celular.</p>
     <div class="fila">
-      <button class="prim" onclick="ir('surtir')">Empezar a surtir</button>
+      <input type="text" id="codigo-unirse" placeholder="KXPT" maxlength="4" autocomplete="off" style="text-transform:uppercase;letter-spacing:6px;text-align:center">
+      <button class="sec" style="flex:0 0 auto" onclick="unirseDesdeInicio()">Unirme</button>
     </div>
-  </section>
+    <p id="unirse-msg" class="sub"></p>
+  </div>
+</section>
 
-  <!-- SURTIR -->
-  <section id="v-surtir" class="oculto">
-    <div id="video-wrap"><video id="video" playsinline muted></video><div id="guia"></div></div>
-    <p id="cam-msg" class="sub"></p>
-    <div id="resultado"><div id="res-grande">—</div><div id="res-nombre">Escanea un producto</div><div id="res-detalle"></div></div>
-    <form id="manual" onsubmit="event.preventDefault();manual()">
-      <input id="codigo" inputmode="numeric" pattern="[0-9]*" maxlength="5" placeholder="Código" autocomplete="off">
-      <button class="prim" type="submit">OK</button>
-    </form>
+<!-- BOLSAS (después de cargar) -->
+<section id="v-bolsas" class="vista oculto">
+  <div class="encabezado"><button class="sec" onclick="ir('surtir')">← Escanear</button><h1 style="margin:0">Bolsas</h1></div>
+  <div id="avisos"></div>
+  <p class="sub">Escribe estos nombres en las bolsas. Toca una para ver qué lleva.</p>
+  <div class="rejilla" id="rejilla"></div>
+</section>
+
+<!-- DETALLE -->
+<section id="v-detalle" class="vista oculto">
+  <div class="encabezado"><button class="sec" onclick="ir('bolsas')">← Bolsas</button></div>
+  <div class="card" id="detalle"></div>
+</section>
+
+<!-- SURTIR -->
+<section id="v-surtir" class="oculto">
+  <div class="barra">
     <div class="fila">
+      <span class="chip" id="chip-red" onclick="ir('compartir')"><span class="pt"></span><span id="red-txt">Solo</span></span>
+      <span class="conteo" id="conteo"></span>
+    </div>
+    <div class="prog"><div id="prog-barra"></div></div>
+  </div>
+  <div class="cuerpo">
+    <div id="cam"><video id="video" playsinline muted></video><div id="mira"></div><div id="cam-msg" class="oculto"></div></div>
+    <div id="res"></div>
+    <div class="acciones">
       <button class="sec" onclick="deshacer()">↩ Deshacer</button>
+      <button class="sec" onclick="abrirTeclado()">⌨ Teclear</button>
       <button class="sec" onclick="ir('bolsas')">Bolsas</button>
-      <button class="sec" onclick="ir('final')">Faltantes</button>
+      <button class="sec" onclick="ir('mas')">Más</button>
     </div>
-  </section>
+    <div id="feed"></div>
+  </div>
+  <div id="velo" class="oculto" onclick="cerrarTeclado()"></div>
+  <div id="teclado" class="oculto">
+    <div id="tec-display"></div>
+    <div class="teclas" id="teclas"></div>
+    <button class="sec ancho" style="margin-top:10px" onclick="cerrarTeclado()">Cerrar</button>
+  </div>
+</section>
 
-  <!-- DETALLE DE UNA BOLSA -->
-  <section id="v-detalle" class="oculto">
-    <div class="card" id="detalle"></div>
-    <button class="sec" style="width:100%" onclick="ir(volverA)">← Volver</button>
-  </section>
+<!-- MÁS -->
+<section id="v-mas" class="vista oculto">
+  <div class="encabezado"><button class="sec" onclick="ir('surtir')">← Escanear</button><h1 style="margin:0">Más</h1></div>
+  <button class="sec ancho" onclick="ir('compartir')" id="btn-compartir">Compartir sesión con otro celular</button>
+  <div style="height:10px"></div>
+  <button class="sec ancho" onclick="ir('final')">Faltantes y sobrantes</button>
+  <div style="height:10px"></div>
+  <button class="sec ancho" onclick="salir()">Volver al inicio</button>
+  <div style="height:24px"></div>
+  <button class="peligro ancho oculto" id="btn-terminar" onclick="terminarSemana()">Terminar semana y borrar</button>
+</section>
 
-  <!-- FINAL -->
-  <section id="v-final" class="oculto">
-    <div id="final"></div>
-    <div class="fila" style="margin-top:12px">
-      <button class="sec" onclick="ir('surtir')">← Seguir surtiendo</button>
-      <button class="peligro" onclick="borrarTodo()">Terminar semana</button>
-    </div>
-  </section>
+<!-- COMPARTIR -->
+<section id="v-compartir" class="vista oculto">
+  <div class="encabezado"><button class="sec" onclick="ir('surtir')">← Escanear</button><h1 style="margin:0">Compartir</h1></div>
+  <div class="card" id="compartir-host">
+    <p class="sub" style="margin:0;text-align:center">Código de la sesión</p>
+    <div id="codigo-sesion"></div>
+    <div id="qr"></div>
+    <p class="sub" style="text-align:center">En el otro celular: escanea este QR con la cámara, o abre la app y escribe el código en «Unirme a otro celular».</p>
+    <p class="sub" style="text-align:center">Deja este celular con la app abierta mientras surten.</p>
+  </div>
+  <div class="card oculto" id="compartir-invitado">
+    <p>Estás conectado a la sesión <b id="codigo-invitado"></b>.</p>
+  </div>
+  <div class="card"><h2>Conectados</h2><div id="personas"></div></div>
+</section>
 
-</main>
+<!-- FINAL -->
+<section id="v-final" class="vista oculto">
+  <div class="encabezado"><button class="sec" onclick="ir('surtir')">← Escanear</button><h1 style="margin:0">Faltantes</h1></div>
+  <div id="final"></div>
+</section>
+
 <script src="vendor/pdf.min.js"></script>
+<script src="vendor/peerjs.min.js"></script>
+<script src="vendor/qrcode.min.js"></script>
 <script src="app.js"></script>
 </body>
 </html>
