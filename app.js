@@ -399,7 +399,7 @@ function enviarEstado() {
 function unirse(codigo) {
   codigo = (codigo || '').toUpperCase().replace(/[^A-Z]/g, '');
   if (codigo.length !== 4) { $('unirse-msg').textContent = 'El código lleva 4 letras.'; return; }
-  if (!miNombre()) { $('unirse-msg').textContent = 'Escribe primero tu nombre (arriba).'; $('mi-nombre').focus(); return; }
+  if (faltaNombre()) return;
   if (!window.Peer) { $('unirse-msg').textContent = 'No se pudo cargar la conexión. Revisa el internet.'; return; }
   rol = 'guest'; codigoInvitado = codigo; estado = null;
   $('unirse-msg').textContent = 'Conectando…';
@@ -430,7 +430,7 @@ function conectarInvitado() {
   });
   conn.on('close', () => { pintarRed('off'); clearTimeout(reintento); reintento = setTimeout(conectarInvitado, 2000); });
 }
-function unirseDesdeInicio() { guardarNombre(); unirse($('codigo-unirse').value); }
+function unirseDesdeInicio() { unirse($('codigo-unirse').value); }
 
 function pintarRed(forzado) {
   const chip = $('chip-red'), txt = $('red-txt');
@@ -457,10 +457,27 @@ function guardar() {
   repintar();
 }
 function guardarNombre() { escribir(CLAVE_NOMBRE, $('mi-nombre').value.trim()); }
-$('mi-nombre').addEventListener('input', guardarNombre);
+$('mi-nombre').addEventListener('input', () => {
+  guardarNombre();
+  $('mi-nombre').classList.remove('con-error');
+  $('nombre-error').classList.add('oculto');
+});
+// Sin nombre no se puede cargar ni unirse: el aviso sale pegado a la casilla, que se ve y se sacude.
+function faltaNombre() {
+  guardarNombre();
+  if (miNombre()) return false;
+  const inp = $('mi-nombre');
+  inp.classList.add('con-error');
+  $('nombre-error').classList.remove('oculto');
+  inp.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  inp.classList.remove('sacudir'); void inp.offsetWidth; inp.classList.add('sacudir');
+  vibrar([80, 80, 80]);
+  setTimeout(() => inp.focus(), 300);
+  return true;
+}
 
 function continuar() {
-  guardarNombre();
+  if (faltaNombre()) return;
   const g = leer(CLAVE);
   if (!g) return;
   estado = JSON.parse(g); rol = 'host';
@@ -593,8 +610,7 @@ function pintarCompartir() {
 
 // ---------- Arranque ----------
 $('btn-pdf').addEventListener('click', () => {
-  guardarNombre();
-  if (!miNombre()) { $('cargando').textContent = 'Escribe primero tu nombre (arriba).'; $('mi-nombre').focus(); return; }
+  if (faltaNombre()) return;
   if (leer(CLAVE) && !confirm('Ya hay una semana guardada. ¿Reemplazarla con la nueva?')) return;
   $('archivos').click();
 });
@@ -611,5 +627,5 @@ if (/^[A-Z]{4}$/.test(hash)) {
   $('codigo-unirse').value = hash;
   history.replaceState(null, '', location.pathname);
   if (miNombre()) unirse(hash);
-  else $('unirse-msg').textContent = 'Escribe tu nombre arriba y toca Unirme.';
+  else { $('nombre-error').textContent = 'Escribe tu nombre y luego toca Unirme.'; faltaNombre(); }
 }
