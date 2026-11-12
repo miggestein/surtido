@@ -282,11 +282,68 @@ function desbloquearAudio() {
     if (audio.state !== 'running') audio.resume();
   } catch {}
   try {
-    if (!vozDesbloqueada && 'speechSynthesis' in window) {
+    if (!vozPropia() && !vozDesbloqueada && 'speechSynthesis' in window) {
       const u = new SpeechSynthesisUtterance(' '); u.volume = 0; speechSynthesis.speak(u);
       vozDesbloqueada = true;
     }
   } catch {}
+}
+
+// ---------- Voz propia (no usa la del sistema) ----------
+// En iPhone, speechSynthesis pausa el video y corta la cámara (fallo de WebKit), y a veces ni suena.
+// Ahí la app genera el audio de cada frase con eSpeak (vendor/voz.worker.js) y lo toca
+// por el mismo canal que los pitidos. También es el respaldo si el celular no trae voces.
+let forzarVozPropia = false, trabajadorVoz = null, vozError = '';
+const frases = new Map();          // texto → AudioBuffer listo | Promise
+function sinVocesDelSistema() { try { return !('speechSynthesis' in window) || (vocesRevisadas && !speechSynthesis.getVoices().length); } catch { return true; } }
+let vocesRevisadas = false; setTimeout(() => { vocesRevisadas = true; }, 2500);
+function vozPropia() { return ES_IOS || forzarVozPropia || sinVocesDelSistema(); }
+function generarFrase(texto) {
+  if (frases.has(texto)) return frases.get(texto);
+  const p = new Promise((ok, no) => {
+    try {
+      if (!trabajadorVoz) {
+        trabajadorVoz = new Worker('vendor/voz.worker.js');
+        trabajadorVoz.pend = new Map();
+        trabajadorVoz.onmessage = e => { const f = trabajadorVoz.pend.get(e.data.id); trabajadorVoz.pend.delete(e.data.id); if (f) e.data.error ? f.no(e.data.error) : f.ok(e.data.wav); };
+        trabajadorVoz.onerror = e => { vozError = 'Voz: ' + (e.message || 'no cargó'); for (const f of trabajadorVoz.pend.values()) f.no(vozError); trabajadorVoz.pend.clear(); };
+      }
+      const id = Math.random();
+      trabajadorVoz.pend.set(id, { ok, no });
+      trabajadorVoz.postMessage({ id, texto });
+    } catch (e) { no(e); }
+  }).then(wav => {
+    audio = audio || new (window.AudioContext || window.webkitAudioContext)();
+    return new Promise((ok, no) => audio.decodeAudioData(wav, ok, no));     // forma con callbacks: sirve en iOS viejos
+  }).then(buf => { frases.set(texto, buf); return buf; })
+    .catch(e => { frases.delete(texto); vozError = 'Voz: ' + (e && e.message || e); throw e; });
+  frases.set(texto, p);
+  return p;
+}
+// Deja listas las frases de la semana para que suenen al instante.
+function prepararFrases() {
+  if (!vozPropia() || !estado) return;
+  const lista = ['No va', 'Sobra', 'Bolsa Laura Esther'];
+  for (const a of estado.asociados) lista.push(a.alias, `${a.alias}. Bolsa completa`, `Sácalo de ${a.alias}`);
+  lista.reduce((p, t) => p.then(() => generarFrase(t)).catch(() => {}), Promise.resolve());
+}
+let fuenteVoz = null;
+function tocarFrase(buf) {
+  try {
+    if (fuenteVoz) { try { fuenteVoz.stop(); } catch {} }
+    if (audio.state !== 'running') audio.resume();
+    const s = audio.createBufferSource(), g = audio.createGain();
+    s.buffer = buf; g.gain.value = 1.6;
+    s.connect(g).connect(audio.destination);
+    s.start(audio.currentTime + 0.14);                     // después del pitido
+    fuenteVoz = s;
+  } catch (e) { vozError = 'Voz: ' + (e && e.message || e); }
+}
+function decirPropia(t) {
+  const pedido = Date.now();
+  const f = frases.get(t);
+  if (f && !f.then) return tocarFrase(f);
+  generarFrase(t).then(buf => { if (Date.now() - pedido < 2500) tocarFrase(buf); }).catch(() => {});
 }
 document.addEventListener('pointerup', desbloquearAudio, { passive: true });
 document.addEventListener('touchend', desbloquearAudio, { passive: true });
@@ -311,12 +368,18 @@ function sonar(tipo) {
 // algo está sonando, y se habla un momento después.
 function decir(t) {
   try {
-    if (!('speechSynthesis' in window)) return;
+    if (vozPropia()) return decirPropia(t);
     const s = speechSynthesis;
     const hablar = () => {
       const u = new SpeechSynthesisUtterance(t);
       if (vozEs) u.voice = vozEs;
       u.lang = vozEs ? vozEs.lang : 'es-MX'; u.rate = 1.05; u.volume = 1;
+      // Si la voz del sistema falla o nunca arranca, se cambia a la voz propia.
+      let arranco = false;
+      u.onstart = () => { arranco = true; };
+      u.onend = () => { arranco = true; };
+      u.onerror = () => { arranco = true; forzarVozPropia = true; prepararFrases(); decirPropia(t); };
+      setTimeout(() => { if (!arranco) { try { s.cancel(); } catch {} forzarVozPropia = true; prepararFrases(); decirPropia(t); } }, 1500);
       try { s.resume(); } catch {}
       s.speak(u);
     };
@@ -457,7 +520,10 @@ async function prenderCamara() {
     bucle(++vuelta);
   } catch (e) {
     diag.error = 'Cámara: ' + (e && (e.name + ' ' + e.message) || e);
-    msg.textContent = 'No pude abrir la cámara. Revisa el permiso, o usa el botón Teclear.';
+    apagarCamara();
+    enReposo = true;                                       // no reintentar solo: esperar el toque
+    msg.innerHTML = `<div><div style="font-size:18px;margin-bottom:12px">No pude abrir la cámara. Revisa el permiso de cámara del navegador, o usa el botón Teclear.</div>
+      <button class="btn-despertar" style="height:auto;min-height:64px" onclick="reinicios=[];prenderCamara()">Reintentar</button></div>`;
     msg.classList.remove('oculto');
   } finally { abriendo = false; }
 }
@@ -476,6 +542,43 @@ function dormirCamara() {
   msg.innerHTML = '<button class="btn-despertar" onclick="prenderCamara()">Tocar para seguir escaneando</button>';
   msg.classList.remove('oculto');
 }
+// Vigilante: cada segundo revisa que la cámara siga viva mientras se está en "Escanear".
+// Si el sistema la cortó, la pausó o se quedó congelada, la revive sola.
+let reinicios = [], tCongelado = 0, tMudo = 0, ultimoTiempoVideo = -1;
+function pedirToque(texto) {
+  apagarCamara();
+  enReposo = true;
+  const msg = $('cam-msg');
+  msg.innerHTML = `<button class="btn-despertar" onclick="reinicios=[];prenderCamara()">${texto}</button>`;
+  msg.classList.remove('oculto');
+}
+function revivirCamara(motivo) {
+  const ahora = Date.now();
+  reinicios = reinicios.filter(t => ahora - t < 30000);
+  reinicios.push(ahora);
+  diag.reinicios = (diag.reinicios || 0) + 1;
+  diag.motivo = motivo;
+  tCongelado = tMudo = 0; ultimoTiempoVideo = -1;
+  if (reinicios.length > 4) {                              // no entrar en un ciclo sin fin
+    try { if (navigator.audioSession) navigator.audioSession.type = 'auto'; } catch {}
+    return pedirToque('La cámara se detuvo. Tocar para reactivarla');
+  }
+  apagarCamara();
+  prenderCamara();
+}
+setInterval(() => {
+  if (vistaActual !== 'surtir' || document.visibilityState !== 'visible' || enReposo || abriendo) return;
+  if (!detector && diag.lector.startsWith('Ninguno')) return;
+  const v = $('video'), pista = stream && stream.getVideoTracks()[0];
+  if (!escaneando || !pista || pista.readyState !== 'live') return revivirCamara('pista terminada');
+  if (pista.muted) { if (++tMudo >= 2) revivirCamara('pista silenciada'); return; }
+  tMudo = 0;
+  if (v.paused) { v.play().catch(() => {}); if (++tCongelado >= 3) revivirCamara('video en pausa'); return; }
+  if (v.currentTime === ultimoTiempoVideo) { if (++tCongelado >= 3) revivirCamara('imagen congelada'); }
+  else tCongelado = 0;
+  ultimoTiempoVideo = v.currentTime;
+}, 1000);
+
 // Algunos Android le pegan dígitos extra al código (p. ej. un "1" al inicio):
 // se prefiere el tramo de 5 dígitos que sí viene en el reporte; si ninguno, los últimos 5.
 function codigoDe(raw) {
@@ -668,7 +771,8 @@ function ir(vista) {
   vistaActual = vista;
   for (const s of document.querySelectorAll('body > section')) s.classList.add('oculto');
   $('v-' + vista).classList.remove('oculto');
-  if (vista === 'surtir') { prenderCamara(); if (!$('res').innerHTML) limpiar(); } else apagarCamara();
+  if (vista === 'surtir') { reinicios = []; prenderCamara(); if (!$('res').innerHTML) limpiar(); } else apagarCamara();
+  if (vista === 'surtir' || vista === 'bolsas' || vista === 'diag') prepararFrases();
   repintar();
   window.scrollTo(0, 0);
 }
@@ -699,11 +803,13 @@ function pintarDiag() {
     ['Cámara', diag.camara],
     ['Lecturas', `${diag.lecturas} intentos · ${diag.aciertos} con código · ~${diag.ms} ms c/u`],
     ['Último código', diag.ultimo],
-    ['Voz', voces],
+    ['Voz', vozPropia() ? `Propia de la app · ${[...frases.values()].filter(f => !f.then).length} frases listas` : 'Del sistema · ' + voces],
     ['Sonido', audio ? audio.state : 'sin iniciar'],
-    ['Versión', 'v6'],
+    ['Cámara revivida', `${diag.reinicios || 0} veces` + (diag.motivo ? ` · ${diag.motivo}` : '')],
+    ['Versión', 'v7'],
   ];
   if (diag.error) filas.push(['Error', diag.error]);
+  if (vozError) filas.push(['Error de voz', vozError]);
   $('diag-tabla').innerHTML = filas.map(([k, v]) => `<tr><td>${k}</td><td class="c" style="font-weight:600;white-space:normal">${esc(String(v))}</td></tr>`).join('');
 }
 function pintarInicio() {

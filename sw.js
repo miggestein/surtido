@@ -1,5 +1,5 @@
 // Guarda la app en el teléfono para que funcione sin internet.
-const CACHE = 'surtido-bw-v6';
+const CACHE = 'surtido-bw-v7';
 const ARCHIVOS = ['./', 'index.html', 'app.js', 'manifest.json', 'icon-180.png', 'icon-192.png', 'icon-512.png',
   'vendor/pdf.min.js', 'vendor/pdf.worker.min.js', 'vendor/peerjs.min.js', 'vendor/qrcode.min.js', 'vendor/zxing-wasm-reader.js', 'vendor/zxing_reader.wasm'];
 
