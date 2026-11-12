@@ -22,6 +22,15 @@ const titulo = s => s.toLowerCase().replace(/(^|\s)\S/g, c => c.toUpperCase())
 function leer(k) { try { return localStorage.getItem(k); } catch { return null; } }
 function escribir(k, v) { try { v === null ? localStorage.removeItem(k) : localStorage.setItem(k, v); } catch {} }
 const miNombre = () => (leer(CLAVE_NOMBRE) || '').trim();
+// Sesión en curso: se retoma sola al recargar la página. {rol:'host'} o {rol:'guest', codigo, nombre}
+const CLAVE_ACTIVA = 'surtido-bw-activa';
+let nombreInvitado = '';           // nombre que el anfitrión le pone al invitado que no escribió uno
+const quienSoy = () => miNombre() || (rol === 'guest' && nombreInvitado) || 'Yo';
+function marcarActiva() {
+  if (rol === 'host') escribir(CLAVE_ACTIVA, JSON.stringify({ rol }));
+  else if (rol === 'guest') escribir(CLAVE_ACTIVA, JSON.stringify({ rol, codigo: codigoInvitado, nombre: nombreInvitado }));
+  else escribir(CLAVE_ACTIVA, null);
+}
 
 // "MARIA DEL CARMEN GARCIA GONZALEZ" → "María del Carmen"; "IMELDA DE LA CERDA VALADEZ" → "Imelda"
 const PARTICULAS = new Set(['de', 'del', 'la', 'las', 'los', 'y', 'san', 'santa']);
@@ -138,6 +147,7 @@ async function cargarArchivos(files) {
   estado = { sesion: codigoNuevo(), asociados, log: [], sobrantes: {}, avisos };
   msg.textContent = '';
   rol = 'host';
+  marcarActiva();
   guardar();
   iniciarAnfitrion();
   ir('bolsas');
@@ -221,7 +231,7 @@ function deshacerDe(quien) {
 // Punto de entrada para escaneos, teclado y deshacer.
 function accion(acc) {
   if (!estado) return;
-  const quien = miNombre() || 'Yo';
+  const quien = quienSoy();
   if (rol === 'guest') {
     if (!conn || !conn.open) { mostrar({ tipo: 'mal', etq: 'Sin conexión', grande: 'No se registró', det: 'Este celular perdió la conexión con el principal. Reconectando…', espera: true }); return; }
     conn.send({ t: 'accion', acc, quien });
@@ -259,7 +269,7 @@ function limpiar() {
   const el = $('res');
   el.className = '';
   el.innerHTML = `<div style="font-size:30px">▥</div><div class="det" style="font-size:19px;font-weight:600">Listo para escanear</div>
-    <div class="det">Acerca el código de barras al recuadro</div>`;
+    <div class="det">Apunta al código de barras o al QR de la etiqueta</div>`;
 }
 
 let audio = null, vozDesbloqueada = false, vozEs = null;
@@ -424,7 +434,7 @@ async function crearDetector() {
     if (!ES_IOS && !forzarZXing && 'BarcodeDetector' in window) {
       const f = await BarcodeDetector.getSupportedFormats();
       if (f.includes('code_128')) {
-        const d = new BarcodeDetector({ formats: ['code_128'] });
+        const d = new BarcodeDetector({ formats: f.includes('qr_code') ? ['code_128', 'qr_code'] : ['code_128'] });
         let fallas = 0;
         diag.lector = 'Nativo (BarcodeDetector)';
         return async lienzo => {
@@ -452,7 +462,7 @@ async function crearDetector() {
   return async (lienzo, ctx) => {
     try {
       const r = await Z.readBarcodes(ctx.getImageData(0, 0, lienzo.width, lienzo.height),
-        { formats: ['Code128'], tryHarder: true, maxNumberOfSymbols: 1 });
+        { formats: ['Code128', 'QRCode'], tryHarder: true, maxNumberOfSymbols: 2 });
       return r.filter(b => b.isValid).map(b => b.text);
     } catch (e) { diag.error = 'ZXing: ' + (e && e.message || e); return []; }
   };
@@ -463,23 +473,139 @@ async function crearDetector() {
 const ANCHO_MAX = 960;
 const lienzoCam = document.createElement('canvas');
 const ctxCam = lienzoCam.getContext('2d', { willReadFrequently: true });
-function recortarMira(v) {
+// lupa = false: todo lo que se ve en el recuadro de la cámara (para alcanzar también el QR de la etiqueta).
+// lupa = true: el centro, ampliado al doble (las etiquetas con barras muy finas solo se leen así).
+function recortarMira(v, lupa) {
   const vw = v.videoWidth, vh = v.videoHeight;
   if (!vw || !vh) return false;
   let cw = v.clientWidth, ch = v.clientHeight;
   if (!cw || !ch) { cw = vw; ch = vh; }                   // sin medidas en pantalla: usar el cuadro completo
   const s = Math.max(cw / vw, ch / vh);                    // object-fit: cover
   const ox = (vw * s - cw) / 2, oy = (vh * s - ch) / 2;
-  // Mira: 12–88 % a lo ancho, 30–70 % a lo alto; con margen extra.
-  let x0 = (0.04 * cw + ox) / s, x1 = (0.96 * cw + ox) / s;
-  let y0 = (0.20 * ch + oy) / s, y1 = (0.80 * ch + oy) / s;
+  // La vista completa incluye además lo que queda arriba y abajo del recuadro (la cámara ve más
+  // de lo que se muestra): así alcanza el QR aunque se apunte a las barras.
+  const [a, b, c, d] = lupa ? [0.1, 0.9, 0.15, 0.85] : [0, 1, -0.7, 1.7];
+  let x0 = (a * cw + ox) / s, x1 = (b * cw + ox) / s;
+  let y0 = (c * ch + oy) / s, y1 = (d * ch + oy) / s;
   x0 = Math.max(0, x0); y0 = Math.max(0, y0); x1 = Math.min(vw, x1); y1 = Math.min(vh, y1);
   const sw = x1 - x0, sh = y1 - y0;
-  const k = Math.min(1, ANCHO_MAX / sw);
+  const k = lupa ? Math.min(2, 1200 / sw) : Math.min(1, ANCHO_MAX / sw);
   const w = Math.round(sw * k), h = Math.round(sh * k);
   if (lienzoCam.width !== w || lienzoCam.height !== h) { lienzoCam.width = w; lienzoCam.height = h; }
+  ctxCam.imageSmoothingQuality = 'high';
   ctxCam.drawImage(v, x0, y0, sw, sh, 0, 0, w, h);
   return true;
+}
+// ---------- Lector propio de Code 128 ----------
+// Las etiquetas de Betterware casi no dejan margen blanco a los lados de las barras, y ZXing lo exige:
+// por eso a veces no las lee. Este lector recorre varias líneas de la imagen, no pide margen,
+// y solo acepta el código si la suma de verificación cuadra y dos líneas dan lo mismo.
+const C128 = ('212222 222122 222221 121223 121322 131222 122213 122312 132212 221213 221312 231212 112232 122132 122231 113222 123122 123221 223211 221132 ' +
+  '221231 213212 223112 312131 311222 321122 321221 312212 322112 322211 212123 212321 232121 111323 131123 131321 112313 132113 132311 211313 ' +
+  '231113 231311 112133 112331 132131 113123 113321 133121 313121 211331 231131 213113 213311 213131 311123 311321 331121 312113 312311 332111 ' +
+  '314111 221411 431111 111224 111422 121124 121421 141122 141221 112214 112412 122114 122411 142112 142211 241211 221114 413111 241112 134111 ' +
+  '111242 121142 121241 114212 124112 124211 411212 421112 421211 212141 214121 412121 111143 111341 131141 114113 114311 411113 411311 113141 ' +
+  '114131 311141 411131 211412 211214 211232').split(' ').map(s => [...s].map(Number));
+// tinta: cuánto más anchas salen las barras que los espacios (en módulos); la tinta corrida es lo normal.
+function simbolo128(r, i, tinta) {                          // 6 franjas (11 módulos) → valor 0..105, o -1
+  const m = (r[i] + r[i + 1] + r[i + 2] + r[i + 3] + r[i + 4] + r[i + 5]) / 11;
+  if (m < 0.8) return -1;
+  let mejor = -1, min = 1.7;
+  for (let v = 0; v < 106; v++) {
+    const p = C128[v]; let d = 0;
+    for (let k = 0; k < 6; k++) { const e = Math.abs(r[i + k] / m + (k & 1 ? tinta : -tinta) - p[k]); if (e > 0.75) { d = 9; break; } d += e; }
+    if (d < min) { min = d; mejor = v; }
+  }
+  return mejor;
+}
+function decodificar128(r, tinta) {                         // r: anchos de franjas, empezando en una oscura
+  const hallados = [];
+  for (let i = 0; i + 12 < r.length; i += 2) {
+    const ini = simbolo128(r, i, tinta);
+    if (ini < 103) continue;
+    const vals = [];
+    let j = i + 6, fin = false;
+    while (j + 6 < r.length && vals.length < 20) {
+      // ¿alto? 2331112 (13 módulos, 7 franjas)
+      const s7 = r[j] + r[j + 1] + r[j + 2] + r[j + 3] + r[j + 4] + r[j + 5] + r[j + 6], m = s7 / 13;
+      if (vals.length >= 2 && [2, 3, 3, 1, 1, 1, 2].every((p, k) => Math.abs(r[j + k] / m + (k & 1 ? tinta : -tinta) - p) <= 0.8)) { fin = true; break; }
+      const v = simbolo128(r, j, tinta);
+      if (v < 0 || v > 102) break;
+      vals.push(v); j += 6;
+    }
+    if (!fin || vals.length < 2) continue;
+    const verif = vals.pop();
+    let suma = ini; vals.forEach((v, k) => suma += v * (k + 1));
+    if (suma % 103 !== verif) continue;
+    let set = ini === 103 ? 'A' : ini === 104 ? 'B' : 'C', txt = '', ok = true;
+    for (const v of vals) {
+      if (set === 'C') { if (v < 100) txt += String(v).padStart(2, '0'); else if (v === 100) set = 'B'; else if (v === 101) set = 'A'; else ok = false; }
+      else if (v === 99) set = 'C';
+      else if (v === 100 && set === 'A') set = 'B';
+      else if (v === 101 && set === 'B') set = 'A';
+      else if (v < 64 || (set === 'B' && v < 96)) txt += String.fromCharCode(v + 32);
+      else ok = false;
+    }
+    if (ok && /^\d{5,7}$/.test(txt)) hallados.push(txt);
+  }
+  return hallados;
+}
+function leerCode128(img) {
+  const { data, width: w, height: h } = img, votos = {};
+  const gris = new Float32Array(w);
+  const FILAS = 22;
+  for (const pend of [0, 0.12, -0.12, 0.25, -0.25]) {       // líneas inclinadas: la etiqueta casi nunca queda derecha
+    for (let f = 1; f <= FILAS; f++) {
+      const yc = h * f / (FILAS + 1);
+      let gmin = 255, gmax = 0;
+      for (let x = 0; x < w; x++) {                         // promedio de 3 renglones (menos ruido)
+        const y = Math.round(yc + (x - w / 2) * pend);
+        if (y < 1 || y > h - 2) { gris[x] = 255; continue; }
+        let g = 0;
+        for (let dy = -1; dy <= 1; dy++) { const o = ((y + dy) * w + x) * 4; g += data[o] * 0.3 + data[o + 1] * 0.59 + data[o + 2] * 0.11; }
+        g /= 3; gris[x] = g; if (g < gmin) gmin = g; if (g > gmax) gmax = g;
+      }
+      if (gmax - gmin < 50) continue;
+      // Crestas y valles de la señal (con histéresis): aguanta barras finas borrosas, donde los
+      // espacios angostos no llegan a blanco. Cada borde va a media altura entre cresta y valle.
+      const H = Math.max(10, (gmax - gmin) * 0.14), ext = [];
+      let dir = 1, ev = gris[0], ex = 0;
+      for (let x = 1; x < w; x++) {
+        const v = gris[x];
+        if (dir > 0) { if (v >= ev) { ev = v; ex = x; } else if (ev - v >= H) { ext.push(ex, ev); dir = -1; ev = v; ex = x; } }
+        else { if (v <= ev) { ev = v; ex = x; } else if (v - ev >= H) { ext.push(ex, ev); dir = 1; ev = v; ex = x; } }
+      }
+      ext.push(ex, ev);
+      if (ext.length < 44) continue;
+      const bordes = [];                                    // bordes[0] es claro→oscuro (ext empieza en cresta)
+      for (let e = 0; e + 3 < ext.length; e += 2) {
+        const xa = ext[e], va = ext[e + 1], xb = ext[e + 2], vb = ext[e + 3], medio = (va + vb) / 2;
+        let x = xa + 1;
+        while (x < xb && (gris[x] - medio) * (va - medio) > 0) x++;
+        const g0 = gris[x - 1], g1 = gris[x];
+        bordes.push(g0 === g1 ? x : x - 1 + (g0 - medio) / (g0 - g1));
+      }
+      const franjas = [];
+      for (let b = 0; b + 1 < bordes.length; b++) franjas.push(bordes[b + 1] - bordes[b]);
+      const alReves = franjas.slice().reverse().slice(franjas.length % 2 ? 0 : 1), vistos = new Set();
+      for (const tinta of [-0.4, -0.2, 0, 0.2, 0.4, 0.6, 0.8]) {
+        for (const t of decodificar128(franjas, tinta)) vistos.add(t);
+        for (const t of decodificar128(alReves, tinta)) vistos.add(t);
+      }
+      for (const t of vistos) votos[t] = (votos[t] || 0) + 1;
+    }
+  }
+  return Object.keys(votos).filter(t => votos[t] >= 2).sort((a, b) => votos[b] - votos[a]);
+}
+
+// Texto leído → código de 5 dígitos. El QR de la etiqueta es un enlace que termina en el código
+// (https://qrco.de/23432); las barras traen el código directo.
+function textoACodigo(raw) {
+  if (/^https?:|\//i.test(raw)) {
+    const m = raw.match(/\/(\d{5})(?:[/?#]|$)/);
+    return m ? m[1] : null;
+  }
+  return codigoDe(raw);
 }
 
 const T_REPOSO = 60000;          // sin escanear 1 min → se apaga la cámara
@@ -592,17 +718,24 @@ function codigoDe(raw) {
 // el teclado está abierto o la app está en segundo plano.
 async function bucle(mia) {
   const v = $('video');
+  let n = 0;
   while (escaneando && mia === vuelta) {
     const inicio = Date.now();
     const libre = !pausado && $('teclado').classList.contains('oculto') && document.visibilityState === 'visible';
     if (libre && inicio - ultimaActividad > T_REPOSO) { dormirCamara(); return; }
-    if (libre && recortarMira(v)) {
+    if (libre && recortarMira(v, ++n % 2 === 0)) {          // alterna: vista completa / lupa al centro
       try {
-        const cods = await detector(lienzoCam, ctxCam);
+        let cods = await detector(lienzoCam, ctxCam);
         if (mia !== vuelta) return;
+        let cod = cods.map(textoACodigo).find(Boolean);
+        if (!cod) {                                         // respaldo: lector propio de barras (no pide margen blanco)
+          try {
+            const mias = leerCode128(ctxCam.getImageData(0, 0, lienzoCam.width, lienzoCam.height));
+            if (mias.length) { cods = mias; cod = mias.map(codigoDe).find(Boolean); diag.propias = (diag.propias || 0) + 1; }
+          } catch (e) { diag.error = 'Lector propio: ' + (e && e.message || e); }
+        }
         const ahora = Date.now();
         diag.lecturas++; diag.ms = Math.round(diag.ms * 0.8 + (ahora - inicio) * 0.2);
-        const cod = cods.map(codigoDe).find(Boolean);
         if (cods.length) { diag.aciertos++; diag.ultimo = cods.join(', ') + (cod && cod !== cods[0] ? ` → ${cod}` : ''); }
         if (cod) {
           // Para contar otra pieza igual, el código tiene que salir de la cámara un momento.
@@ -613,8 +746,8 @@ async function bucle(mia) {
         }
       } catch {}
     }
-    // Espera lo que falte para ~200 ms (si el celular es lento, al menos 80 ms de respiro)
-    await new Promise(r => setTimeout(r, Math.max(80, 200 - (Date.now() - inicio))));
+    // Espera lo que falte para ~150 ms (si el celular es lento, al menos 60 ms de respiro)
+    await new Promise(r => setTimeout(r, Math.max(60, 150 - (Date.now() - inicio))));
   }
 }
 async function pedirPantallaEncendida() {
@@ -640,9 +773,18 @@ function iniciarAnfitrion() {
   peer.on('open', () => pintarRed());
   peer.on('connection', c => {
     c.on('data', d => {
-      if (d.t === 'hola') { conexiones.set(c, d.quien || 'Alguien'); enviarEstado(); pintarRed(); }
+      if (d.t === 'hola') {
+        let nombre = (d.quien || '').trim();
+        if (!nombre) {                                       // sin nombre: "inv. Adela", "inv. Adela 2"…
+          const base = `inv. ${miNombre() || 'anfitrión'}`, usados = new Set(conexiones.values());
+          nombre = base;
+          for (let i = 2; usados.has(nombre); i++) nombre = `${base} ${i}`;
+          try { c.send({ t: 'nombre', nombre }); } catch {}
+        }
+        conexiones.set(c, nombre); enviarEstado(); pintarRed();
+      }
       if (d.t === 'accion' && rol === 'host') {
-        const res = ejecutar(d.acc, d.quien || conexiones.get(c) || 'Alguien');
+        const res = ejecutar(d.acc, conexiones.get(c) || d.quien || 'Alguien');
         guardar();
         try { c.send({ t: 'res', res }); } catch {}
       }
@@ -667,9 +809,10 @@ function enviarEstado() {
 function unirse(codigo) {
   codigo = (codigo || '').toUpperCase().replace(/[^A-Z]/g, '');
   if (codigo.length !== 4) { $('unirse-msg').textContent = 'El código lleva 4 letras.'; return; }
-  if (faltaNombre()) return;
+  guardarNombre();                                         // el nombre es opcional: si falta, lo pone el anfitrión
   if (!window.Peer) { $('unirse-msg').textContent = 'No se pudo cargar la conexión. Revisa el internet.'; return; }
   rol = 'guest'; codigoInvitado = codigo; estado = null;
+  marcarActiva();
   $('unirse-msg').textContent = 'Conectando…';
   if (peer) { try { peer.destroy(); } catch {} }
   peer = new Peer();
@@ -686,8 +829,9 @@ function conectarInvitado() {
   if (conn) { try { conn.close(); } catch {} }
   conn = peer.connect(PREFIJO_PEER + codigoInvitado.toLowerCase(), { reliable: true });
   pintarRed('conectando');
-  conn.on('open', () => { conn.send({ t: 'hola', quien: miNombre() }); pintarRed(); });
+  conn.on('open', () => { conn.send({ t: 'hola', quien: miNombre() || nombreInvitado }); pintarRed(); });
   conn.on('data', d => {
+    if (d.t === 'nombre') { nombreInvitado = d.nombre; marcarActiva(); repintar(); }
     if (d.t === 'estado') {
       const primera = !estado;
       estado = d.estado; conectados = d.conectados || [];
@@ -749,11 +893,14 @@ function continuar() {
   const g = leer(CLAVE);
   if (!g) return;
   estado = JSON.parse(g); rol = 'host';
+  marcarActiva();
   iniciarAnfitrion();
   ir('surtir');
 }
 function salir() {
   apagarCamara();
+  escribir(CLAVE_ACTIVA, null);
+  clearTimeout(reintento); nombreInvitado = '';
   if (peer) { try { peer.destroy(); } catch {} peer = null; }
   conn = null; conexiones.clear(); rol = null; estado = null;
   ir('inicio');
@@ -801,12 +948,12 @@ function pintarDiag() {
     ['Navegador', nav + (ES_IOS ? ` · iOS ${so || ''}` : '')],
     ['Lector', diag.lector],
     ['Cámara', diag.camara],
-    ['Lecturas', `${diag.lecturas} intentos · ${diag.aciertos} con código · ~${diag.ms} ms c/u`],
+    ['Lecturas', `${diag.lecturas} intentos · ${diag.aciertos} con código (${diag.propias || 0} con el lector propio) · ~${diag.ms} ms c/u`],
     ['Último código', diag.ultimo],
     ['Voz', vozPropia() ? `Propia de la app · ${[...frases.values()].filter(f => !f.then).length} frases listas` : 'Del sistema · ' + voces],
     ['Sonido', audio ? audio.state : 'sin iniciar'],
     ['Cámara revivida', `${diag.reinicios || 0} veces` + (diag.motivo ? ` · ${diag.motivo}` : '')],
-    ['Versión', 'v7'],
+    ['Versión', 'v8'],
   ];
   if (diag.error) filas.push(['Error', diag.error]);
   if (vozError) filas.push(['Error de voz', vozError]);
@@ -946,6 +1093,16 @@ const hash = location.hash.replace('#', '').toUpperCase();
 if (/^[A-Z]{4}$/.test(hash)) {
   $('codigo-unirse').value = hash;
   history.replaceState(null, '', location.pathname);
-  if (miNombre()) unirse(hash);
-  else { $('nombre-error').textContent = 'Escribe tu nombre y luego toca Unirme.'; faltaNombre(); }
+  unirse(hash);
+} else {
+  // Al recargar la página se retoma la sesión que estaba abierta.
+  try {
+    const act = JSON.parse(leer(CLAVE_ACTIVA) || 'null');
+    if (act && act.rol === 'host' && leer(CLAVE) && miNombre()) continuar();
+    else if (act && act.rol === 'guest' && /^[A-Z]{4}$/.test(act.codigo || '')) {
+      nombreInvitado = act.nombre || '';
+      $('codigo-unirse').value = act.codigo;
+      unirse(act.codigo);
+    }
+  } catch {}
 }
