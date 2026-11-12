@@ -335,7 +335,7 @@ async function crearDetector() {
       const f = await BarcodeDetector.getSupportedFormats();
       if (f.includes('code_128')) {
         const d = new BarcodeDetector({ formats: ['code_128'] });
-        return async v => (await d.detect(v)).map(c => c.rawValue || '');
+        return async lienzo => (await d.detect(lienzo)).map(c => c.rawValue || '');
       }
     }
   } catch {}
@@ -348,46 +348,87 @@ async function crearDetector() {
     });
     await Z.getZXingModule();
   } catch { return null; }
-  const lienzo = document.createElement('canvas');
-  const ctx = lienzo.getContext('2d', { willReadFrequently: true });
-  return async v => {
-    const w = v.videoWidth, h = v.videoHeight;
-    if (!w || !h) return [];
-    lienzo.width = w; lienzo.height = h;
-    ctx.drawImage(v, 0, 0, w, h);
+  return async (lienzo, ctx, fuerte) => {
     try {
-      const r = await Z.readBarcodes(ctx.getImageData(0, 0, w, h), { formats: ['Code128'], tryHarder: true, maxNumberOfSymbols: 1 });
+      const r = await Z.readBarcodes(ctx.getImageData(0, 0, lienzo.width, lienzo.height),
+        { formats: ['Code128'], tryHarder: fuerte, maxNumberOfSymbols: 1 });
       return r.filter(b => b.isValid).map(b => b.text);
     } catch { return []; }
   };
 }
 
+// Solo se analiza la franja de la mira, reducida: mucho menos trabajo por cuadro.
+// El lienzo se reutiliza (no se crea memoria nueva en cada vuelta).
+const ANCHO_MAX = 960;
+const lienzoCam = document.createElement('canvas');
+const ctxCam = lienzoCam.getContext('2d', { willReadFrequently: true });
+function recortarMira(v) {
+  const vw = v.videoWidth, vh = v.videoHeight;
+  if (!vw || !vh) return false;
+  const cw = v.clientWidth || vw, ch = v.clientHeight || vh;
+  const s = Math.max(cw / vw, ch / vh);                    // object-fit: cover
+  const ox = (vw * s - cw) / 2, oy = (vh * s - ch) / 2;
+  // Mira: 12–88 % a lo ancho, 30–70 % a lo alto; con margen extra.
+  let x0 = (0.04 * cw + ox) / s, x1 = (0.96 * cw + ox) / s;
+  let y0 = (0.20 * ch + oy) / s, y1 = (0.80 * ch + oy) / s;
+  x0 = Math.max(0, x0); y0 = Math.max(0, y0); x1 = Math.min(vw, x1); y1 = Math.min(vh, y1);
+  const sw = x1 - x0, sh = y1 - y0;
+  const k = Math.min(1, ANCHO_MAX / sw);
+  const w = Math.round(sw * k), h = Math.round(sh * k);
+  if (lienzoCam.width !== w || lienzoCam.height !== h) { lienzoCam.width = w; lienzoCam.height = h; }
+  ctxCam.drawImage(v, x0, y0, sw, sh, 0, 0, w, h);
+  return true;
+}
+
+const T_REPOSO = 60000;          // sin escanear 1 min → se apaga la cámara
+let vuelta = 0, enReposo = false, ultimaActividad = Date.now(), abriendo = false;
+const camViva = () => !!stream && stream.getVideoTracks().some(t => t.readyState === 'live');
+
 async function prenderCamara() {
   pedirPantallaEncendida();
-  if (escaneando) return;
+  ultimaActividad = Date.now();
+  if (escaneando && camViva()) return;
+  if (abriendo) return;
+  apagarCamara();                                          // por si quedó congelada (volver de segundo plano)
+  enReposo = false;
   const msg = $('cam-msg');
-  detector = detector || await crearDetector();
-  if (!detector) {
-    msg.textContent = 'No se pudo cargar el lector de códigos. Usa el botón Teclear.';
-    msg.classList.remove('oculto'); return;
-  }
+  abriendo = true;
   try {
-    stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment', width: { ideal: 1280 } }, audio: false });
+    detector = detector || await crearDetector();
+    if (!detector) {
+      msg.textContent = 'No se pudo cargar el lector de códigos. Usa el botón Teclear.';
+      msg.classList.remove('oculto'); return;
+    }
+    stream = await navigator.mediaDevices.getUserMedia({
+      video: { facingMode: 'environment', width: { ideal: 1280 }, height: { ideal: 720 }, frameRate: { ideal: 15 } }, audio: false });
+    // Si el sistema corta la cámara (llamada, otra app), se vuelve a abrir al regresar.
+    stream.getVideoTracks().forEach(t => t.addEventListener('ended', () => { if (stream && t === stream.getVideoTracks()[0]) apagarCamara(); }));
     const v = $('video');
     v.srcObject = stream;
     await v.play();
+    if (vistaActual !== 'surtir' || document.visibilityState !== 'visible') { apagarCamara(); return; }
     msg.classList.add('oculto');
     escaneando = true;
-    bucle();
+    bucle(++vuelta);
   } catch (e) {
     msg.textContent = 'No pude abrir la cámara. Revisa el permiso, o usa el botón Teclear.';
     msg.classList.remove('oculto');
-  }
+  } finally { abriendo = false; }
 }
 function apagarCamara() {
   escaneando = false;
+  vuelta++;                                                // corta cualquier bucle anterior
   if (stream) stream.getTracks().forEach(t => t.stop());
   stream = null;
+  const v = $('video');
+  if (v) v.srcObject = null;
+}
+function dormirCamara() {
+  apagarCamara();
+  enReposo = true;
+  const msg = $('cam-msg');
+  msg.innerHTML = '<button class="btn-despertar" onclick="prenderCamara()">Tocar para seguir escaneando</button>';
+  msg.classList.remove('oculto');
 }
 // Algunos Android le pegan dígitos extra al código (p. ej. un "1" al inicio):
 // se prefiere el tramo de 5 dígitos que sí viene en el reporte; si ninguno, los últimos 5.
@@ -398,29 +439,45 @@ function codigoDe(raw) {
   for (let i = d.length - 5; i >= 0; i--) tramos.push(d.slice(i, i + 5));
   return tramos.find(t => estado && estado.asociados.some(a => a.items[t])) || tramos[0];
 }
-async function bucle() {
+// ~5 lecturas por segundo. No analiza mientras hay un aviso esperando "Entendido",
+// el teclado está abierto o la app está en segundo plano.
+async function bucle(mia) {
   const v = $('video');
-  while (escaneando) {
-    try {
-      const cods = await detector(v);
-      const ahora = Date.now();
-      const cod = cods.map(codigoDe).find(Boolean);
-      if (cod) {
-        // Para contar otra pieza igual, el código tiene que salir de la cámara un momento.
-        const repetido = cod === visto.cod && ahora - visto.t < T_FUERA;
-        visto = { cod, t: ahora };
-        if (!repetido && !pausado && $('teclado').classList.contains('oculto')) accion({ t: 'scan', cod });
-      }
-    } catch {}
-    await new Promise(r => setTimeout(r, 120));
+  let n = 0;
+  while (escaneando && mia === vuelta) {
+    const inicio = Date.now();
+    const libre = !pausado && $('teclado').classList.contains('oculto') && document.visibilityState === 'visible';
+    if (libre && inicio - ultimaActividad > T_REPOSO) { dormirCamara(); return; }
+    if (libre && recortarMira(v)) {
+      try {
+        const cods = await detector(lienzoCam, ctxCam, ++n % 3 === 0);   // modo pesado solo 1 de cada 3
+        if (mia !== vuelta) return;
+        const ahora = Date.now();
+        const cod = cods.map(codigoDe).find(Boolean);
+        if (cod) {
+          // Para contar otra pieza igual, el código tiene que salir de la cámara un momento.
+          const repetido = cod === visto.cod && ahora - visto.t < T_FUERA;
+          visto = { cod, t: ahora };
+          ultimaActividad = ahora;
+          if (!repetido && !pausado && $('teclado').classList.contains('oculto')) accion({ t: 'scan', cod });
+        }
+      } catch {}
+    }
+    // Espera lo que falte para ~200 ms (si el celular es lento, al menos 80 ms de respiro)
+    await new Promise(r => setTimeout(r, Math.max(80, 200 - (Date.now() - inicio))));
   }
 }
 async function pedirPantallaEncendida() {
   try { if ('wakeLock' in navigator && !wakeLock) { wakeLock = await navigator.wakeLock.request('screen'); wakeLock.addEventListener('release', () => wakeLock = null); } } catch {}
 }
+// Segundo plano (bloquear el celular, cambiar de app): se apaga la cámara y se vuelve a abrir al regresar.
 document.addEventListener('visibilitychange', () => {
-  if (document.visibilityState === 'visible' && !$('v-surtir').classList.contains('oculto')) pedirPantallaEncendida();
+  if (document.visibilityState !== 'visible') { apagarCamara(); return; }
+  if (vistaActual === 'surtir' && !enReposo) prenderCamara();
 });
+window.addEventListener('pagehide', apagarCamara);
+// Cualquier toque cuenta como actividad (no se duerme mientras usan la app).
+document.addEventListener('pointerdown', () => { ultimaActividad = Date.now(); }, { passive: true });
 
 // ---------- Red: celular a celular ----------
 let peer = null, conn = null, conexiones = new Map(), codigoInvitado = null, reintento = null;
