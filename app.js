@@ -262,19 +262,34 @@ function limpiar() {
     <div class="det">Acerca el código de barras al recuadro</div>`;
 }
 
-let audio = null;
-// iPhone solo deja sonar y hablar si el primer sonido nace de un toque: se "desbloquea" al primer toque.
+let audio = null, vozDesbloqueada = false, vozEs = null;
+const ES_IOS = /iP(hone|ad|od)/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+// iPhone: que suene aunque el switch de silencio esté puesto (iOS 17+)
+try { if (navigator.audioSession) navigator.audioSession.type = 'playback'; } catch {}
+// Voz en español (es-MX de preferencia). Las voces cargan tarde en algunos navegadores.
+function elegirVoz() {
+  try {
+    const vs = speechSynthesis.getVoices();
+    vozEs = vs.find(v => /es[-_]MX/i.test(v.lang)) || vs.find(v => /es[-_](US|419)/i.test(v.lang)) || vs.find(v => /^es/i.test(v.lang)) || null;
+  } catch {}
+}
+try { elegirVoz(); speechSynthesis.addEventListener?.('voiceschanged', elegirVoz); } catch {}
+// iPhone solo deja sonar y hablar si el sonido nace de un toque. Además suspende el audio
+// tras llamadas o al bloquear: por eso se revisa en CADA toque, no solo en el primero.
 function desbloquearAudio() {
   try {
     audio = audio || new (window.AudioContext || window.webkitAudioContext)();
-    if (audio.state === 'suspended') audio.resume();
-    const u = new SpeechSynthesisUtterance(' '); u.volume = 0; speechSynthesis.speak(u);
+    if (audio.state !== 'running') audio.resume();
   } catch {}
-  document.removeEventListener('touchend', desbloquearAudio);
-  document.removeEventListener('click', desbloquearAudio);
+  try {
+    if (!vozDesbloqueada && 'speechSynthesis' in window) {
+      const u = new SpeechSynthesisUtterance(' '); u.volume = 0; speechSynthesis.speak(u);
+      vozDesbloqueada = true;
+    }
+  } catch {}
 }
-document.addEventListener('touchend', desbloquearAudio);
-document.addEventListener('click', desbloquearAudio);
+document.addEventListener('pointerup', desbloquearAudio, { passive: true });
+document.addEventListener('touchend', desbloquearAudio, { passive: true });
 
 function sonar(tipo) {
   try {
@@ -292,12 +307,20 @@ function sonar(tipo) {
     }
   } catch {}
 }
+// En iPhone, cancel() seguido de speak() al instante pierde la frase: solo se cancela si
+// algo está sonando, y se habla un momento después.
 function decir(t) {
   try {
-    speechSynthesis.cancel();
-    const u = new SpeechSynthesisUtterance(t);
-    u.lang = 'es-MX'; u.rate = 1.05;
-    speechSynthesis.speak(u);
+    if (!('speechSynthesis' in window)) return;
+    const s = speechSynthesis;
+    const hablar = () => {
+      const u = new SpeechSynthesisUtterance(t);
+      if (vozEs) u.voice = vozEs;
+      u.lang = vozEs ? vozEs.lang : 'es-MX'; u.rate = 1.05; u.volume = 1;
+      try { s.resume(); } catch {}
+      s.speak(u);
+    };
+    if (s.speaking || s.pending) { s.cancel(); setTimeout(hablar, 120); } else hablar();
   } catch {}
 }
 function vibrar(p) { try { p.length && navigator.vibrate && navigator.vibrate(p); } catch {} }
@@ -329,31 +352,46 @@ let stream = null, detector = null, escaneando = false, visto = { cod: null, t: 
 
 // Lector de códigos: el nativo de Chrome Android (BarcodeDetector) si existe;
 // si no (iPhone/Safari), ZXing-C++ compilado a WebAssembly (vendor/zxing_reader.wasm, funciona sin internet).
+// Lo que ve cada celular (pantalla Más → Diagnóstico)
+const diag = { lector: '—', camara: '—', lecturas: 0, aciertos: 0, ultimo: '—', ms: 0, error: '' };
+let forzarZXing = false;
 async function crearDetector() {
   try {
-    if ('BarcodeDetector' in window) {
+    // En iPhone el BarcodeDetector puede existir (feature flag) pero no lee nada: ahí siempre ZXing.
+    if (!ES_IOS && !forzarZXing && 'BarcodeDetector' in window) {
       const f = await BarcodeDetector.getSupportedFormats();
       if (f.includes('code_128')) {
         const d = new BarcodeDetector({ formats: ['code_128'] });
-        return async lienzo => (await d.detect(lienzo)).map(c => c.rawValue || '');
+        let fallas = 0;
+        diag.lector = 'Nativo (BarcodeDetector)';
+        return async lienzo => {
+          try { const r = (await d.detect(lienzo)).map(c => c.rawValue || ''); fallas = 0; return r; }
+          catch (e) {   // si el nativo truena seguido, se cambia a ZXing
+            diag.error = 'Nativo: ' + (e && e.message || e);
+            if (++fallas > 5) { forzarZXing = true; detector = await crearDetector(); }
+            return [];
+          }
+        };
       }
     }
   } catch {}
   const Z = window.ZXingWASM;
-  if (!Z) return null;
+  if (!Z) { diag.lector = 'Ninguno (no cargó ZXing)'; return null; }
   try {
     Z.prepareZXingModule({
       overrides: { locateFile: (p, pre) => p.endsWith('.wasm') ? new URL('vendor/zxing_reader.wasm', location.href).href : pre + p },
       fireImmediately: true,
     });
     await Z.getZXingModule();
-  } catch { return null; }
-  return async (lienzo, ctx, fuerte) => {
+  } catch (e) { diag.lector = 'Ninguno (falló ZXing)'; diag.error = String(e && e.message || e); return null; }
+  diag.lector = 'ZXing (WebAssembly)';
+  // El recorte es chico, así que se puede usar siempre el modo minucioso.
+  return async (lienzo, ctx) => {
     try {
       const r = await Z.readBarcodes(ctx.getImageData(0, 0, lienzo.width, lienzo.height),
-        { formats: ['Code128'], tryHarder: fuerte, maxNumberOfSymbols: 1 });
+        { formats: ['Code128'], tryHarder: true, maxNumberOfSymbols: 1 });
       return r.filter(b => b.isValid).map(b => b.text);
-    } catch { return []; }
+    } catch (e) { diag.error = 'ZXing: ' + (e && e.message || e); return []; }
   };
 }
 
@@ -365,7 +403,8 @@ const ctxCam = lienzoCam.getContext('2d', { willReadFrequently: true });
 function recortarMira(v) {
   const vw = v.videoWidth, vh = v.videoHeight;
   if (!vw || !vh) return false;
-  const cw = v.clientWidth || vw, ch = v.clientHeight || vh;
+  let cw = v.clientWidth, ch = v.clientHeight;
+  if (!cw || !ch) { cw = vw; ch = vh; }                   // sin medidas en pantalla: usar el cuadro completo
   const s = Math.max(cw / vw, ch / vh);                    // object-fit: cover
   const ox = (vw * s - cw) / 2, oy = (vh * s - ch) / 2;
   // Mira: 12–88 % a lo ancho, 30–70 % a lo alto; con margen extra.
@@ -400,17 +439,24 @@ async function prenderCamara() {
       msg.classList.remove('oculto'); return;
     }
     stream = await navigator.mediaDevices.getUserMedia({
-      video: { facingMode: 'environment', width: { ideal: 1280 }, height: { ideal: 720 }, frameRate: { ideal: 15 } }, audio: false });
+      // iPhone no deja enfocar a mano: más resolución para que las barras salgan nítidas (igual se recorta).
+      video: ES_IOS ? { facingMode: 'environment', width: { ideal: 1920 }, height: { ideal: 1080 } }
+                    : { facingMode: 'environment', width: { ideal: 1280 }, height: { ideal: 720 }, frameRate: { ideal: 15 } }, audio: false });
     // Si el sistema corta la cámara (llamada, otra app), se vuelve a abrir al regresar.
     stream.getVideoTracks().forEach(t => t.addEventListener('ended', () => { if (stream && t === stream.getVideoTracks()[0]) apagarCamara(); }));
     const v = $('video');
     v.srcObject = stream;
+    v.setAttribute('playsinline', ''); v.muted = true;
     await v.play();
+    const ajustes = stream.getVideoTracks()[0]?.getSettings?.() || {};
+    diag.camara = `${v.videoWidth || ajustes.width || '?'}×${v.videoHeight || ajustes.height || '?'}` + (ajustes.frameRate ? ` a ${Math.round(ajustes.frameRate)} fps` : '');
+    diag.error = '';
     if (vistaActual !== 'surtir' || document.visibilityState !== 'visible') { apagarCamara(); return; }
     msg.classList.add('oculto');
     escaneando = true;
     bucle(++vuelta);
   } catch (e) {
+    diag.error = 'Cámara: ' + (e && (e.name + ' ' + e.message) || e);
     msg.textContent = 'No pude abrir la cámara. Revisa el permiso, o usa el botón Teclear.';
     msg.classList.remove('oculto');
   } finally { abriendo = false; }
@@ -443,17 +489,18 @@ function codigoDe(raw) {
 // el teclado está abierto o la app está en segundo plano.
 async function bucle(mia) {
   const v = $('video');
-  let n = 0;
   while (escaneando && mia === vuelta) {
     const inicio = Date.now();
     const libre = !pausado && $('teclado').classList.contains('oculto') && document.visibilityState === 'visible';
     if (libre && inicio - ultimaActividad > T_REPOSO) { dormirCamara(); return; }
     if (libre && recortarMira(v)) {
       try {
-        const cods = await detector(lienzoCam, ctxCam, ++n % 3 === 0);   // modo pesado solo 1 de cada 3
+        const cods = await detector(lienzoCam, ctxCam);
         if (mia !== vuelta) return;
         const ahora = Date.now();
+        diag.lecturas++; diag.ms = Math.round(diag.ms * 0.8 + (ahora - inicio) * 0.2);
         const cod = cods.map(codigoDe).find(Boolean);
+        if (cods.length) { diag.aciertos++; diag.ultimo = cods.join(', ') + (cod && cod !== cods[0] ? ` → ${cod}` : ''); }
         if (cod) {
           // Para contar otra pieza igual, el código tiene que salir de la cámara un momento.
           const repetido = cod === visto.cod && ahora - visto.t < T_FUERA;
@@ -635,6 +682,29 @@ function repintar() {
   if (v === 'final') pintarFinal();
   if (v === 'compartir') pintarCompartir();
   if (v === 'mas') { $('btn-terminar').classList.toggle('oculto', rol !== 'host'); }
+  if (v === 'diag') pintarDiag();
+}
+function pintarDiag() {
+  if (!detector) crearDetector().then(d => { detector = detector || d; if (vistaActual === 'diag') pintarDiag(); });
+  const ua = navigator.userAgent;
+  const nav = /OPR|OPT\//.test(ua) ? 'Opera' : /CriOS/.test(ua) ? 'Chrome (iPhone)' : /FxiOS/.test(ua) ? 'Firefox (iPhone)'
+    : /EdgiOS|EdgA|Edg\//.test(ua) ? 'Edge' : /SamsungBrowser/.test(ua) ? 'Samsung Internet' : /Firefox/.test(ua) ? 'Firefox'
+    : /Chrome/.test(ua) ? 'Chrome' : /Safari/.test(ua) ? 'Safari' : 'Otro';
+  const so = (ua.match(/OS (\d+[_\d]*) like Mac/) || [])[1]?.replace(/_/g, '.');
+  let voces = '—';
+  try { const vs = speechSynthesis.getVoices(); voces = `${vs.filter(v => /^es/i.test(v.lang)).length} en español de ${vs.length}` + (vozEs ? ` · usa ${vozEs.name} (${vozEs.lang})` : ''); } catch { voces = 'No disponible'; }
+  const filas = [
+    ['Navegador', nav + (ES_IOS ? ` · iOS ${so || ''}` : '')],
+    ['Lector', diag.lector],
+    ['Cámara', diag.camara],
+    ['Lecturas', `${diag.lecturas} intentos · ${diag.aciertos} con código · ~${diag.ms} ms c/u`],
+    ['Último código', diag.ultimo],
+    ['Voz', voces],
+    ['Sonido', audio ? audio.state : 'sin iniciar'],
+    ['Versión', 'v6'],
+  ];
+  if (diag.error) filas.push(['Error', diag.error]);
+  $('diag-tabla').innerHTML = filas.map(([k, v]) => `<tr><td>${k}</td><td class="c" style="font-weight:600;white-space:normal">${esc(String(v))}</td></tr>`).join('');
 }
 function pintarInicio() {
   $('mi-nombre').value = miNombre();

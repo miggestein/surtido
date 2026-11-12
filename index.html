@@ -213,9 +213,22 @@
   <div style="height:10px"></div>
   <button class="sec ancho" onclick="ir('final')">Faltantes y sobrantes</button>
   <div style="height:10px"></div>
+  <button class="sec ancho" onclick="ir('diag')">Probar voz, sonido y lector</button>
+  <div style="height:10px"></div>
   <button class="sec ancho" onclick="salir()">Volver al inicio</button>
   <div style="height:24px"></div>
   <button class="peligro ancho oculto" id="btn-terminar" onclick="terminarSemana()">Terminar semana y borrar</button>
+</section>
+
+<!-- DIAGNÓSTICO -->
+<section id="v-diag" class="vista oculto">
+  <div class="encabezado"><button class="sec" onclick="ir('mas')">← Más</button><h1 style="margin:0">Probar</h1></div>
+  <button class="prim ancho" onclick="decir('Bolsa Laura Esther')">Probar voz</button>
+  <div style="height:10px"></div>
+  <button class="sec ancho" onclick="sonar('ok'); vibrar([60])">Probar sonido</button>
+  <p class="sub" style="font-size:17px">Si no se oye: sube el volumen y quita el modo silencio. En iPhone, revisa también que el navegador no esté silenciado.</p>
+  <table id="diag-tabla"></table>
+  <p class="sub" style="font-size:17px">Escanea unos códigos y vuelve aquí. Si algo falla, mándale una captura de esta pantalla a Miguel.</p>
 </section>
 
 <!-- COMPARTIR -->
