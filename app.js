@@ -450,7 +450,8 @@ async function crearDetector() {
     if (!ES_IOS && !forzarZXing && 'BarcodeDetector' in window) {
       const f = await BarcodeDetector.getSupportedFormats();
       if (f.includes('code_128')) {
-        const d = new BarcodeDetector({ formats: f.includes('qr_code') ? ['code_128', 'qr_code'] : ['code_128'] });
+        // Algunas etiquetas (ej. Guarda Clima, "*21750*") vienen en Code 39, no en Code 128.
+        const d = new BarcodeDetector({ formats: ['code_128', 'code_39', 'qr_code'].filter(x => f.includes(x)) });
         let fallas = 0;
         diag.lector = 'Nativo (BarcodeDetector)';
         return async lienzo => {
@@ -478,7 +479,7 @@ async function crearDetector() {
   return async (lienzo, ctx) => {
     try {
       const r = await Z.readBarcodes(ctx.getImageData(0, 0, lienzo.width, lienzo.height),
-        { formats: ['Code128', 'QRCode'], tryHarder: true, maxNumberOfSymbols: 2 });
+        { formats: ['Code128', 'Code39', 'QRCode'], tryHarder: true, maxNumberOfSymbols: 2 });
       return r.filter(b => b.isValid).map(b => b.text);
     } catch (e) { diag.error = 'ZXing: ' + (e && e.message || e); return []; }
   };
@@ -970,7 +971,7 @@ function pintarDiag() {
     ['Voz', vozPropia() ? `Propia de la app · ${[...frases.values()].filter(f => !f.then).length} frases listas` : 'Del sistema · ' + voces],
     ['Sonido', audio ? audio.state : 'sin iniciar'],
     ['Cámara revivida', `${diag.reinicios || 0} veces` + (diag.motivo ? ` · ${diag.motivo}` : '')],
-    ['Versión', 'v9'],
+    ['Versión', 'v10'],
   ];
   if (diag.error) filas.push(['Error', diag.error]);
   if (vozError) filas.push(['Error de voz', vozError]);
