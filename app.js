@@ -41,19 +41,35 @@ function nombrePila(completo) {
   while (i > 1 && PARTICULAS.has(p[i - 1].toLowerCase())) i--;
   return p.slice(0, Math.max(1, i)).join(' ');
 }
+// Nombre + apellidos en partes: "Imelda De La Cerda Valadez" → ["de la Cerda", "Valadez"]
+function apellidos(completo, pila) {
+  const resto = titulo(completo.trim().replace(/\s+/g, ' ')).split(' ').slice(pila.split(' ').length);
+  const partes = []; let pend = [];
+  for (const w of resto) {
+    if (PARTICULAS.has(w.toLowerCase())) pend.push(w.toLowerCase());
+    else { partes.push([...pend, w].join(' ')); pend = []; }
+  }
+  if (pend.length) partes.push(pend.join(' '));
+  return partes;
+}
+// Siempre nombre y primer apellido, como en la nota (Observación #1: evitar confusiones).
+// Si aún se repite, se agrega el segundo apellido; la misma asociada en dos notas lleva el código de la nota.
 function ponerAlias(asociados) {
-  for (const a of asociados) a.alias = nombrePila(a.nombre);
-  const cuenta = {};
-  for (const a of asociados) cuenta[a.alias] = (cuenta[a.alias] || 0) + 1;
-  const base = asociados.map(a => a.alias);
-  asociados.forEach((a, i) => {
-    if (cuenta[base[i]] < 2) return;
-    // La misma asociada en dos notas de distribuidoras distintas: "Imelda (FDWP)"
-    const misma = asociados.filter((b, j) => base[j] === base[i] && b.nombre === a.nombre).length > 1;
-    if (misma && a.dist) { a.alias += ` (${a.dist})`; return; }
-    const resto = titulo(a.nombre).split(' ').slice(a.alias.split(' ').length);   // dos "Laura": primer apellido
-    a.alias += ' ' + (resto.find(w => !PARTICULAS.has(w.toLowerCase())) || '');
-  });
+  for (const a of asociados) {
+    const pila = nombrePila(a.nombre), ap = apellidos(a.nombre, pila);
+    a.alias = [pila, ap[0]].filter(Boolean).join(' ');
+    a._ap = ap;
+  }
+  const repetidos = () => { const c = {}; for (const a of asociados) c[a.alias] = (c[a.alias] || 0) + 1; return c; };
+  let cuenta = repetidos();
+  for (const a of asociados) {
+    if (cuenta[a.alias] < 2) continue;
+    const mismaPersona = asociados.filter(b => b.alias === a.alias && b.nombre === a.nombre).length > 1;
+    if (!mismaPersona && a._ap[1]) a.alias += ' ' + a._ap[1];
+  }
+  cuenta = repetidos();
+  for (const a of asociados) if (cuenta[a.alias] > 1 && a.dist) a.alias += ` (${a.dist})`;
+  for (const a of asociados) delete a._ap;
 }
 
 // ---------- Lectura del PDF ----------
@@ -893,6 +909,7 @@ function continuar() {
   const g = leer(CLAVE);
   if (!g) return;
   estado = JSON.parse(g); rol = 'host';
+  ponerAlias(estado.asociados);                            // semanas ya cargadas: nombres con apellido
   marcarActiva();
   iniciarAnfitrion();
   ir('surtir');
@@ -953,7 +970,7 @@ function pintarDiag() {
     ['Voz', vozPropia() ? `Propia de la app · ${[...frases.values()].filter(f => !f.then).length} frases listas` : 'Del sistema · ' + voces],
     ['Sonido', audio ? audio.state : 'sin iniciar'],
     ['Cámara revivida', `${diag.reinicios || 0} veces` + (diag.motivo ? ` · ${diag.motivo}` : '')],
-    ['Versión', 'v8'],
+    ['Versión', 'v9'],
   ];
   if (diag.error) filas.push(['Error', diag.error]);
   if (vozError) filas.push(['Error de voz', vozError]);
